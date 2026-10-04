@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kamera-Sonde</title>
+<!-- Wegwerf-Prototyp zu Issue #52: misst die Browser-Kamera am Pixel (Testplan T1–T8) und nimmt Clips fürs Eval-Set auf. -->
+<style>
+  :root { --bg:#111; --fg:#eee; --mut:#999; --ok:#3c3; --warn:#fc3; --bad:#f55; --box:#1c1c1c; --line:#333; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, sans-serif; }
+  #status { position:sticky; top:0; z-index:5; background:#000d; padding:6px 10px; font:12px/1.3 ui-monospace, monospace; display:flex; flex-wrap:wrap; gap:4px 12px; }
+  #status b { color:var(--mut); font-weight:normal; }
+  #buehne { position:relative; background:#000; }
+  video { display:block; width:100%; max-height:62vh; object-fit:contain; }
+  #overlay { position:absolute; inset:0; pointer-events:none; }
+  main { padding:8px 10px 80px; }
+  details { background:var(--box); border:1px solid var(--line); border-radius:8px; margin:8px 0; padding:4px 10px; }
+  summary { font-weight:600; padding:6px 0; cursor:pointer; }
+  .zeile { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:6px 0; }
+  button { background:#2a2a2a; color:var(--fg); border:1px solid #555; border-radius:6px; padding:9px 12px; font-size:14px; }
+  button.an { background:#264; border-color:var(--ok); }
+  button:disabled { opacity:.4; }
+  select, input[type=text], input[type=number], textarea { background:#000; color:var(--fg); border:1px solid #555; border-radius:6px; padding:7px; font-size:14px; }
+  textarea { width:100%; min-height:70px; }
+  input[type=range] { flex:1; min-width:140px; }
+  pre { white-space:pre-wrap; word-break:break-all; font:11px/1.3 ui-monospace, monospace; max-height:240px; overflow:auto; background:#000; padding:6px; margin:6px 0; }
+  .mut { color:var(--mut); font-size:12px; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  table { border-collapse:collapse; font:12px ui-monospace, monospace; }
+  td, th { border-bottom:1px solid var(--line); padding:2px 6px; text-align:right; }
+  th:first-child, td:first-child { text-align:left; }
+</style>
+</head>
+<body>
+<div id="status">
+  <span><b>ws</b> <span id="sWs">–</span></span>
+  <span><b>Strom</b> <span id="sStrom">–</span></span>
+  <span><b>fps</b> <span id="sFps">–</span></span>
+  <span><b>gesendet/s</b> <span id="sSend">–</span></span>
+  <span><b>RTT p50/p95</b> <span id="sRtt">–</span></span>
+  <span><b>Karte</b> <span id="sKarte">–</span></span>
+  <span><b>Schärfe</b> <span id="sScharf">–</span></span>
+  <span><b>Aufnahme</b> <span id="sRec">aus</span></span>
+</div>
+<div id="buehne"><video id="video" playsinline muted></video><canvas id="overlay"></canvas></div>
+<main>
+
+<details open>
+  <summary>Kamera</summary>
+  <div class="zeile">
+    <select id="gerät"><option value="">Rückkamera (facingMode)</option></select>
+    <select id="aufl">
+      <option value="1920x1080">1920×1080</option>
+      <option value="3840x2160">3840×2160</option>
+      <option value="4000x3000">4000×3000 (4:3)</option>
+      <option value="4080x3072">4080×3072 (4:3)</option>
+      <option value="2560x1920">2560×1920 (4:3)</option>
+      <option value="1280x720">1280×720</option>
+    </select>
+    <select id="fpsWunsch"><option>30</option><option>60</option><option>24</option></select>
+    <select id="resize"><option value="none">resizeMode none</option><option value="crop-and-scale">crop-and-scale</option></select>
+  </div>
+  <div class="zeile">
+    <button id="bStart">Kamera starten</button>
+    <button id="bStopp">Stopp</button>
+    <label><input type="checkbox" id="autoNeu" checked> nach Sperre automatisch neu starten</label>
+  </div>
+  <div class="zeile">
+    <span class="mut">Kartenrahmen</span>
+    <input type="range" id="rahmen" min="30" max="98" value="80">
+    <span id="rahmenTxt" class="mut"></span>
+  </div>
+  <div class="mut">Karte so halten, dass sie den grünen Rahmen füllt. Der Rahmen zeigt die Kartenhöhe in Pixeln des Kamerabilds; ≥ 1.070 px braucht der Passcode.</div>
+</details>
+
+<details>
+  <summary>T1 Fähigkeiten</summary>
+  <div class="zeile"><button id="bFaehig">auslesen und merken</button></div>
+  <pre id="faehigTxt"></pre>
+</details>
+
+<details>
+  <summary>T2 Auflösung × Bildrate</summary>
+  <div class="mut">Für jede Auflösung oben neu starten, ruhig halten, dann messen.</div>
+  <div class="zeile"><button id="bFpsMess">5 s messen und merken</button></div>
+  <pre id="fpsTxt"></pre>
+</details>
+
+<details>
+  <summary>T3/T5 Fokus, Belichtung, Torch, Standbild</summary>
+  <div class="zeile">
+    <select id="fokusModus"><option value="continuous">Fokus: continuous</option><option value="manual">Fokus: manual</option><option value="single-shot">Fokus: single-shot</option></select>
+    <label><input type="checkbox" id="torch"> Torch</label>
+    <button id="bPoi">Messpunkt Mitte</button>
+  </div>
+  <div class="zeile"><span class="mut">Fokusabstand</span><input type="range" id="fokusAbst" step="0.005"><span id="fokusAbstTxt" class="mut">–</span></div>
+  <div class="zeile"><span class="mut">Belichtungskorrektur</span><input type="range" id="belKorr" step="0.1"><span id="belKorrTxt" class="mut">–</span></div>
+  <div class="zeile">
+    <input type="text" id="bildName" placeholder="Name, z. B. 12cm-foil-torch" size="22">
+    <button id="bStand">Standbild (Stromauflösung)</button>
+    <button id="bFoto">takePhoto()</button>
+  </div>
+  <div class="zeile"><span class="mut">Abstand (cm) für die Nahfokus-Reihe</span><input type="number" id="abstandCm" value="12" min="3" max="40" style="width:70px"><button id="bNah">Nahfokus-Punkt merken (2 s)</button></div>
+  <pre id="steuerTxt"></pre>
+</details>
+
+<details>
+  <summary>T4 Pipeline und Rundreise</summary>
+  <div class="zeile">
+    <select id="qual"><option value="0.7">JPEG 0,70</option><option value="0.85" selected>JPEG 0,85</option><option value="0.95">JPEG 0,95</option></select>
+    <select id="zuschnitt"><option value="rahmen">Zuschnitt: Kartenrahmen</option><option value="ganz">ganzes Bild</option></select>
+    <select id="maxH"><option value="0">volle Höhe</option><option value="1600">max. 1600 px</option><option value="1080">max. 1080 px</option><option value="720">max. 720 px</option></select>
+    <select id="thread"><option value="haupt">Haupt-Thread</option><option value="worker">Worker</option></select>
+    <select id="unterwegs"><option value="1">1 unterwegs</option><option value="2" selected>2 unterwegs</option><option value="3">3 unterwegs</option></select>
+    <select id="rate"><option value="0">Rate: so schnell wie möglich</option><option value="15">max. 15/s</option><option value="10">max. 10/s</option><option value="5">max. 5/s</option></select>
+  </div>
+  <div class="zeile"><button id="bSenden">Senden an</button><button id="bMess20">20 s messen und merken</button></div>
+  <table id="pipeTab"></table>
+  <pre id="pipeTxt"></pre>
+</details>
+
+<details>
+  <summary>Aufnahme (Eval-Set)</summary>
+  <div class="mut">Nimmt mit genau den Einstellungen aus T4 auf (Auflösung, Zuschnitt, Qualität, Rate). Jedes Bild wird mit Zeitstempel und Kamera-Metadaten auf dem Pi abgelegt.</div>
+  <div class="zeile"><input type="text" id="clipName" placeholder="Name, z. B. probe-halterung" size="24"><button id="bRec">Aufnahme starten</button></div>
+  <pre id="recTxt"></pre>
+</details>
+
+<details>
+  <summary>T6 Lebenszyklus</summary>
+  <div class="mut">Sperren, App wechseln, Benachrichtigungsleiste, Anruf. Alles wird automatisch protokolliert.</div>
+  <pre id="lebenTxt"></pre>
+</details>
+
+<details>
+  <summary>T7 Ton und Vibration</summary>
+  <div class="zeile">
+    <button data-fb="kurz">kurz</button><button data-fb="doppelt">doppelt</button><button data-fb="lang">lang</button>
+    <label><input type="checkbox" id="fbTon" checked> Ton</label>
+    <label><input type="checkbox" id="fbVib" checked> Vibration</label>
+  </div>
+  <pre id="fbTxt"></pre>
+</details>
+
+<details>
+  <summary>T8 Dauerlast (15 min)</summary>
+  <div class="mut">Halterung, Senden läuft. Schreibt alle 10 s fps, Rundreise, Akku.</div>
+  <div class="zeile"><button id="bDauer">Dauerlast starten</button></div>
+  <pre id="dauerTxt"></pre>
+</details>
+
+<details open>
+  <summary>Ergebnisse</summary>
+  <div class="zeile"><input type="text" id="laufName" placeholder="Lauf, z. B. pixel7pro-abend" size="24"></div>
+  <textarea id="notizen" placeholder="Beobachtungen: Vibration bei stumm/DND, Glanz, Hitze …"></textarea>
+  <div class="zeile"><button id="bHoch">Hochladen</button><button id="bLeeren">Ergebnisse leeren</button></div>
+  <pre id="hochTxt"></pre>
+</details>
+
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const TESTBILD = new URLSearchParams(location.search).has("testbild");
+const KARTE_SEITEN = 59 / 86;  // Breite/Höhe einer Karte
+const PASSCODE_MIN_PX = 1070;
+
+// ---------- Ergebnisse (bleiben über Neuladen erhalten) ----------
+const LEER = () => ({ umgebung: null, faehigkeiten: [], fps: [], nahfokus: [], standbilder: [], takePhoto: [], pipeline: [], aufnahmen: [], lebenszyklus: [], feedback: [], dauerlast: [], fehler: [] });
+let erg = LEER();
+try { const alt = localStorage.getItem("sonde-erg"); if (alt) erg = Object.assign(LEER(), JSON.parse(alt)); } catch {}
+function merke() { try { localStorage.setItem("sonde-erg", JSON.stringify(erg)); } catch {} zeigeZaehler(); }
+function zeigeZaehler() {
+  $("hochTxt").textContent = Object.entries(erg).filter(([, v]) => Array.isArray(v)).map(([k, v]) => `${k}: ${v.length}`).join("  ");
+}
+function fehler(wo, e) { const t = `${new Date().toISOString()} ${wo}: ${e && e.message || e}`; console.error(t); erg.fehler.push(t); merke(); }
+window.addEventListener("error", (e) => fehler("window", e.message));
+window.addEventListener("unhandledrejection", (e) => fehler("promise", e.reason));
+
+// ---------- Statistik ----------
+class Reihe {
+  constructor(n = 600) { this.n = n; this.w = []; }
+  add(v) { if (Number.isFinite(v)) { this.w.push(v); if (this.w.length > this.n) this.w.shift(); } }
+  p(q) { if (!this.w.length) return NaN; const s = [...this.w].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(q * s.length))]; }
+  mittel() { return this.w.length ? this.w.reduce((a, b) => a + b, 0) / this.w.length : NaN; }
+  leer() { this.w = []; }
+}
+const f1 = (v) => Number.isFinite(v) ? v.toFixed(1) : "–";
+const f0 = (v) => Number.isFinite(v) ? v.toFixed(0) : "–";
+
+// ---------- WebSocket ----------
+let ws = null, wsOffen = false;
+const offen = new Map();   // seq → {tGesendet, ...}
+let seq = 0;
+function verbinde() {
+  ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => { wsOffen = true; $("sWs").innerHTML = '<span class="ok">offen</span>'; };
+  ws.onclose = () => { wsOffen = false; offen.clear(); unterwegs = 0; $("sWs").innerHTML = '<span class="bad">zu</span>'; setTimeout(verbinde, 1000); };
+  ws.onmessage = (e) => {
+    const t = performance.now();
+    const m = JSON.parse(e.data);
+    if (m.seq !== undefined && m.seq !== null) {
+      const o = offen.get(m.seq); if (!o) return;
+      offen.delete(m.seq); unterwegs = Math.max(0, unterwegs - 1);
+      const rtt = t - o.tGesendet;
+      st.rtt.add(rtt); st.aufnahmeBisEcho.add(o.tAufnahme !== null ? t - o.tAufnahme : NaN);
+      if (messung) messung.rtt.push(rtt);
+    } else if (m.typ === "aufnahme_laeuft") { $("recTxt").textContent = `läuft → ${m.ordner}`; }
+    else if (m.typ === "aufnahme_beendet") { $("recTxt").textContent = `fertig: ${m.ordner}, ${m.bilder} Bilder`; erg.aufnahmen.push({ ...m, einstellungen: pipelineEinstellungen(), stand: aktuelleSettings }); merke(); }
+  };
+}
+verbinde();
+
+// ---------- Kamera ----------
+let strom = null, track = null, reader = null, laeuft = false, wakeLock = null;
+let frameB = 0, frameH = 0;      // Größe der Bilder aus dem Strom
+let aktuelleSettings = {};
+let sollConstraints = {};        // zuletzt gesetzte erweiterte Constraints (für Neustart)
+let audio = null;
+
+async function geraeteListe() {
+  try {
+    const g = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+    const sel = $("gerät"), wert = sel.value;
+    sel.innerHTML = '<option value="">Rückkamera (facingMode)</option>' + g.map((d) => `<option value="${d.deviceId}">${d.label || d.deviceId.slice(0, 8)}</option>`).join("");
+    sel.value = wert;
+    return g.map((d) => ({ label: d.label, deviceId: d.deviceId, groupId: d.groupId }));
+  } catch (e) { fehler("enumerateDevices", e); return []; }
+}
+
+function testbildStrom() {
+  const c = document.createElement("canvas"); c.width = 1920; c.height = 1080;
+  const ctx = c.getContext("2d"); let n = 0;
+  setInterval(() => {
+    n++; ctx.fillStyle = "#345"; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = "#c93"; const h = 900, w = h * KARTE_SEITEN; ctx.fillRect(960 - w / 2 + Math.sin(n / 20) * 20, 90, w, h);
+    ctx.fillStyle = "#000"; ctx.font = "60px monospace"; ctx.fillText("TESTBILD " + n, 700, 540);
+  }, 33);
+  return c.captureStream(30);
+}
+
+async function starteKamera() {
+  stoppeKamera();
+  const [w, h] = $("aufl").value.split("x").map(Number);
+  const video = { width: { ideal: w }, height: { ideal: h }, frameRate: { ideal: Number($("fpsWunsch").value) }, resizeMode: $("resize").value };
+  if ($("gerät").value) video.deviceId = { exact: $("gerät").value }; else video.facingMode = { ideal: "environment" };
+  try {
+    strom = TESTBILD ? testbildStrom() : await navigator.mediaDevices.getUserMedia({ video, audio: false });
+  } catch (e) { fehler("getUserMedia", e); return; }
+  track = strom.getVideoTracks()[0];
+  for (const ev of ["mute", "unmute", "ended"]) track.addEventListener(ev, () => leben(`track ${ev}`));
+  $("video").srcObject = strom; $("video").play().catch(() => {});
+  laeuft = true;
+  await geraeteListe();
+  if (Object.keys(sollConstraints).length) await setze(sollConstraints, true);
+  await wachHalten();
+  audioAn();
+  leseSchleife();
+  setTimeout(steuerungEinrichten, 600);
+}
+
+function stoppeKamera() {
+  laeuft = false;
+  try { reader && reader.cancel(); } catch {}
+  reader = null;
+  if (strom) strom.getTracks().forEach((t) => t.stop());
+  strom = null; track = null;
+}
+
+async function wachHalten() {
+  if (!("wakeLock" in navigator)) { leben("wakeLock: nicht vorhanden"); return; }
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    leben("wakeLock: aktiv");
+    wakeLock.addEventListener("release", () => leben("wakeLock: freigegeben"));
+  } catch (e) { leben(`wakeLock: abgelehnt (${e.name})`); }
+}
+
+function audioAn() {
+  try {
+    if (!audio) audio = new AudioContext({ latencyHint: "interactive" });
+    if (audio.state !== "running") audio.resume();
+  } catch (e) { fehler("AudioContext", e); }
+}
+
+// ---------- Bildschleife ----------
+const st = {
+  fpsTs: new Reihe(90), abholAbstand: new Reihe(90), rtt: new Reihe(300), aufnahmeBisGesendet: new Reihe(300), abholBisGesendet: new Reihe(300),
+  aufnahmeBisEcho: new Reihe(300), zeichnen: new Reihe(300), kodieren: new Reihe(300), bytes: new Reihe(300), gesendetZeit: new Reihe(60),
+};
+let letzterTs = null, letzteAbholung = null, uhrPasst = null, uhrProben = [];
+let senden = false, unterwegs = 0, kodiertGerade = false, letztesSenden = 0;
+let messung = null, aufnahmeAn = false, letzteSchaerfe = 0, scharfWert = NaN;
+let frameZaehler = 0, sichtbarSeit = null, settingsVorVerbergen = null;
+
+async function leseSchleife() {
+  if (!("MediaStreamTrackProcessor" in window)) { fehler("Pipeline", "MediaStreamTrackProcessor fehlt – Rückfall requestVideoFrameCallback"); return rvfcSchleife(); }
+  const proc = new MediaStreamTrackProcessor({ track, maxBufferSize: 1 });
+  reader = proc.readable.getReader();
+  while (laeuft && reader) {
+    let r;
+    try { r = await reader.read(); } catch (e) { leben(`reader: ${e.message}`); break; }
+    if (r.done) { leben("reader: Strom zu Ende"); break; }
+    verarbeite(r.value, performance.now());
+  }
+}
+
+async function rvfcSchleife() {
+  const v = $("video");
+  const schritt = async (jetzt, meta) => {
+    if (!laeuft) return;
+    try {
+      const frame = new VideoFrame(v, { timestamp: Math.round(meta.captureTime ? meta.captureTime * 1000 : jetzt * 1000) });
+      verarbeite(frame, performance.now());
+    } catch (e) { fehler("rvfc", e); }
+    v.requestVideoFrameCallback(schritt);
+  };
+  v.requestVideoFrameCallback(schritt);
+}
+
+function verarbeite(frame, tAbhol) {
+  frameZaehler++;
+  frameB = frame.displayWidth; frameH = frame.displayHeight;
+  if (sichtbarSeit !== null) { leben(`erstes Bild nach Rückkehr: ${f0(tAbhol - sichtbarSeit)} ms`); sichtbarSeit = null; vergleicheNachRueckkehr(); }
+  // Bildrate aus den Zeitstempeln der Kamera
+  if (letzterTs !== null) { const d = (frame.timestamp - letzterTs) / 1000; if (d > 0) st.fpsTs.add(d); if (messung) messung.tsAbstand.push(d); }
+  letzterTs = frame.timestamp;
+  if (letzteAbholung !== null) st.abholAbstand.add(tAbhol - letzteAbholung);
+  letzteAbholung = tAbhol;
+  // Läuft frame.timestamp auf der Uhr von performance.now()? Dann ist „Aufnahme → …“ messbar.
+  if (uhrProben.length < 30) { uhrProben.push(tAbhol - frame.timestamp / 1000); if (uhrProben.length === 30) { const s = [...uhrProben].sort((a, b) => a - b); const med = s[15]; uhrPasst = med >= 0 && med < 1000; leben(`Uhr-Abgleich: Abholung − timestamp Median ${f1(med)} ms → ${uhrPasst ? "gleiche Uhr" : "andere Uhr"}`); } }
+  const tAufnahme = uhrPasst ? frame.timestamp / 1000 : null;
+
+  if (tAbhol - letzteSchaerfe > 300) { letzteSchaerfe = tAbhol; schaerfe(frame); }
+
+  const rate = Number($("rate").value);
+  const darf = senden && wsOffen && !kodiertGerade && unterwegs < Number($("unterwegs").value) && (!rate || tAbhol - letztesSenden >= 1000 / rate - 2);
+  if (!darf) { frame.close(); return; }
+  letztesSenden = tAbhol;
+  kodiere(frame, tAbhol, tAufnahme);
+}
+
+function rahmenRect(b, h) {
+  if ($("zuschnitt").value === "ganz") return { sx: 0, sy: 0, sw: b, sh: h };
+  let sh = Math.round(h * Number($("rahmen").value) / 100), sw = Math.round(sh * KARTE_SEITEN);
+  if (sw > b) { sw = b; sh = Math.round(b / KARTE_SEITEN); }
+  return { sx: Math.round((b - sw) / 2), sy: Math.round((h - sh) / 2), sw, sh };
+}
+
+let worker = null, jobId = 0; const jobs = new Map();
+function holeWorker() {
+  if (worker) return worker;
+  worker = new Worker("worker.js");
+  worker.onmessage = (e) => { const j = jobs.get(e.data.id); jobs.delete(e.data.id); j && j(e.data); };
+  return worker;
+}
+
+async function kodiere(frame, tAbhol, tAufnahme) {
+  kodiertGerade = true; unterwegs++;
+  const tsFrame = frame.timestamp;
+  const r = rahmenRect(frame.displayWidth, frame.displayHeight);
+  const maxH = Number($("maxH").value);
+  const skal = maxH && r.sh > maxH ? maxH / r.sh : 1;
+  const job = { ...r, ow: Math.round(r.sw * skal), oh: Math.round(r.sh * skal), quality: Number($("qual").value), id: ++jobId };
+  let buf, zeichnenMs, kodierenMs;
+  try {
+    if ($("thread").value === "worker") {
+      const antwort = await new Promise((ok) => { jobs.set(job.id, ok); holeWorker().postMessage({ frame, job }, [frame]); });
+      if (antwort.fehler) throw new Error(antwort.fehler);
+      ({ buf, zeichnenMs, kodierenMs } = antwort);
+    } else {
+      const t0 = performance.now();
+      const c = new OffscreenCanvas(job.ow, job.oh);
+      c.getContext("2d").drawImage(frame, r.sx, r.sy, r.sw, r.sh, 0, 0, job.ow, job.oh);
+      frame.close();
+      const t1 = performance.now();
+      buf = await (await c.convertToBlob({ type: "image/jpeg", quality: job.quality })).arrayBuffer();
+      zeichnenMs = t1 - t0; kodierenMs = performance.now() - t1;
+    }
+  } catch (e) { try { frame.close(); } catch {} kodiertGerade = false; unterwegs--; fehler("kodiere", e); return; }
+  kodiertGerade = false;
+  if (!wsOffen) { unterwegs--; return; }
+  const s = ++seq;
+  const kopf = {
+    seq: s, t_abholung_ms: tAbhol, ts_frame_us: tsFrame ?? null, t_aufnahme_ms: tAufnahme, strom: [frameB, frameH],
+    zuschnitt: [r.sx, r.sy, r.sw, r.sh], bild: [job.ow, job.oh], qualitaet: job.quality, thread: $("thread").value,
+    zeichnen_ms: zeichnenMs, kodieren_ms: kodierenMs, bytes: buf.byteLength, kamera: aktuelleSettings, schaerfe: scharfWert,
+  };
+  const tGesendet = performance.now(); kopf.t_gesendet_ms = tGesendet;
+  const kb = new TextEncoder().encode(JSON.stringify(kopf));
+  const paket = new Uint8Array(4 + kb.length + buf.byteLength);
+  new DataView(paket.buffer).setUint32(0, kb.length);
+  paket.set(kb, 4); paket.set(new Uint8Array(buf), 4 + kb.length);
+  offen.set(s, { tGesendet, tAufnahme });
+  ws.send(paket);
+  st.zeichnen.add(zeichnenMs); st.kodieren.add(kodierenMs); st.bytes.add(buf.byteLength);
+  st.abholBisGesendet.add(tGesendet - tAbhol); st.aufnahmeBisGesendet.add(tAufnahme !== null ? tGesendet - tAufnahme : NaN);
+  st.gesendetZeit.add(tGesendet);
+  if (messung) { messung.abholBisGesendet.push(tGesendet - tAbhol); messung.aufnahmeBisGesendet.push(tAufnahme !== null ? tGesendet - tAufnahme : null); messung.zeichnen.push(zeichnenMs); messung.kodieren.push(kodierenMs); messung.bytes.push(buf.byteLength); }
+}
+
+// Schärfe: Varianz des Laplace-Operators im Kartenrahmen, auf ~360 px Höhe verkleinert
+const schaerfeCanvas = new OffscreenCanvas(1, 1);
+function schaerfe(frame) {
+  try {
+    const r = rahmenRect(frame.displayWidth, frame.displayHeight);
+    const k = Math.min(1, 360 / r.sh), w = Math.max(8, Math.round(r.sw * k)), h = Math.max(8, Math.round(r.sh * k));
+    schaerfeCanvas.width = w; schaerfeCanvas.height = h;
+    const ctx = schaerfeCanvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(frame, r.sx, r.sy, r.sw, r.sh, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) g[i] = 0.299 * d[4 * i] + 0.587 * d[4 * i + 1] + 0.114 * d[4 * i + 2];
+    let s = 0, s2 = 0, n = 0;
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x; const l = 4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]; s += l; s2 += l * l; n++; }
+    scharfWert = s2 / n - (s / n) ** 2;
+  } catch (e) { scharfWert = NaN; }
+}
+
+// ---------- Overlay und Statusleiste ----------
+function malOverlay() {
+  const v = $("video"), c = $("overlay");
+  c.width = v.clientWidth; c.height = v.clientHeight;
+  const ctx = c.getContext("2d"); ctx.clearRect(0, 0, c.width, c.height);
+  if (!frameB) return;
+  const k = Math.min(c.width / frameB, c.height / frameH), ox = (c.width - frameB * k) / 2, oy = (c.height - frameH * k) / 2;
+  const alt = $("zuschnitt").value; $("zuschnitt").value = "rahmen"; const r = rahmenRect(frameB, frameH); $("zuschnitt").value = alt;
+  ctx.strokeStyle = r.sh >= PASSCODE_MIN_PX ? "#3c3" : "#f55"; ctx.lineWidth = 3;
+  ctx.strokeRect(ox + r.sx * k, oy + r.sy * k, r.sw * k, r.sh * k);
+}
+function rahmenHoehe() { const alt = $("zuschnitt").value; $("zuschnitt").value = "rahmen"; const r = rahmenRect(frameB, frameH); $("zuschnitt").value = alt; return r.sh; }
+
+setInterval(() => {
+  malOverlay();
+  $("sStrom").textContent = frameB ? `${frameB}×${frameH}` : "–";
+  const fps = 1000 / st.fpsTs.mittel(); $("sFps").textContent = f1(fps);
+  const jetzt = performance.now(); const zuletzt = st.gesendetZeit.w.filter((t) => jetzt - t < 2000).length / 2;
+  $("sSend").textContent = senden ? f1(zuletzt) : "–";
+  $("sRtt").textContent = `${f0(st.rtt.p(0.5))}/${f0(st.rtt.p(0.95))} ms`;
+  const rh = frameB ? rahmenHoehe() : 0; $("sKarte").innerHTML = frameB ? `<span class="${rh >= PASSCODE_MIN_PX ? "ok" : "bad"}">${rh} px</span>` : "–";
+  $("rahmenTxt").textContent = frameB ? `${$("rahmen").value} % → Karte ${rh} px hoch` : `${$("rahmen").value} %`;
+  $("sScharf").textContent = f0(scharfWert);
+  $("sRec").innerHTML = aufnahmeAn ? '<span class="bad">● läuft</span>' : "aus";
+  zeigePipeline();
+  if (track && track.getSettings) {
+    try {
+      aktuelleSettings = track.getSettings();
+      $("fokusAbstTxt").textContent = `${aktuelleSettings.focusDistance ?? "–"} m (${aktuelleSettings.focusMode ?? "–"})`;
+      $("belKorrTxt").textContent = `${aktuelleSettings.exposureCompensation ?? "–"}`;
+    } catch {}
+  }
+}, 250);
+
+function zeigePipeline() {
+  const zeilen = [
+    ["Aufnahme → gesendet", st.aufnahmeBisGesendet], ["Abholung → gesendet", st.abholBisGesendet], ["zeichnen", st.zeichnen],
+    ["JPEG kodieren", st.kodieren], ["Rundreise (Senden → Echo)", st.rtt], ["Aufnahme → Echo", st.aufnahmeBisEcho], ["Abstand der Abholung", st.abholAbstand],
+  ];
+  $("pipeTab").innerHTML = "<tr><th>ms</th><th>p50</th><th>p95</th><th>max</th></tr>" + zeilen.map(([n, r]) => `<tr><td>${n}</td><td>${f1(r.p(0.5))}</td><td>${f1(r.p(0.95))}</td><td>${f1(r.p(1))}</td></tr>`).join("")
+    + `<tr><td>JPEG kB</td><td>${f0(st.bytes.p(0.5) / 1024)}</td><td>${f0(st.bytes.p(0.95) / 1024)}</td><td>${f0(st.bytes.p(1) / 1024)}</td></tr>`;
+}
+
+// ---------- T1 ----------
+async function faehigkeiten() {
+  if (!track) return;
+  const daten = {
+    zeit: new Date().toISOString(), constraintsGefragt: { aufl: $("aufl").value, fps: $("fpsWunsch").value, resize: $("resize").value },
+    label: track.label, geraete: await geraeteListe(), capabilities: track.getCapabilities ? track.getCapabilities() : null, settings: track.getSettings(),
+    unterstuetzt: navigator.mediaDevices.getSupportedConstraints(),
+    api: { MediaStreamTrackProcessor: "MediaStreamTrackProcessor" in window, ImageCapture: "ImageCapture" in window, OffscreenCanvas: "OffscreenCanvas" in window, wakeLock: "wakeLock" in navigator, vibrate: "vibrate" in navigator, PressureObserver: "PressureObserver" in window, getBattery: "getBattery" in navigator },
+  };
+  if ("ImageCapture" in window && !TESTBILD) { try { daten.photoCapabilities = await new ImageCapture(track).getPhotoCapabilities(); } catch (e) { daten.photoCapabilities = String(e); } }
+  erg.faehigkeiten.push(daten); merke();
+  $("faehigTxt").textContent = JSON.stringify(daten, null, 1);
+  steuerungEinrichten();
+}
+
+// ---------- T2 ----------
+async function fpsMessen() {
+  if (!track) return;
+  $("fpsTxt").textContent = "misst 5 s …";
+  const ts = []; const start = performance.now(); const z0 = frameZaehler;
+  messung = { tsAbstand: ts, rtt: [], abholBisGesendet: [], aufnahmeBisGesendet: [], zeichnen: [], kodieren: [], bytes: [] };
+  await new Promise((ok) => setTimeout(ok, 5000));
+  messung = null;
+  const s = [...ts].sort((a, b) => a - b), q = (p) => s[Math.min(s.length - 1, Math.floor(p * s.length))];
+  const e = { zeit: new Date().toISOString(), gefragt: $("aufl").value + "@" + $("fpsWunsch").value + " " + $("resize").value, strom: [frameB, frameH], settings: track.getSettings(),
+    bilder: frameZaehler - z0, fpsMittel: (frameZaehler - z0) / ((performance.now() - start) / 1000), abstandP50: q(0.5), abstandP95: q(0.95), abstandMax: q(1) };
+  erg.fps.push(e); merke();
+  $("fpsTxt").textContent = JSON.stringify(e, null, 1);
+}
+
+// ---------- T3/T5 Steuerung ----------
+function steuerungEinrichten() {
+  if (!track || !track.getCapabilities) return;
+  const c = track.getCapabilities(), s = track.getSettings();
+  if (c.focusDistance) { Object.assign($("fokusAbst"), { min: c.focusDistance.min, max: c.focusDistance.max, step: c.focusDistance.step || 0.005, value: s.focusDistance ?? c.focusDistance.min }); }
+  else $("fokusAbst").disabled = true;
+  if (c.exposureCompensation) { Object.assign($("belKorr"), { min: c.exposureCompensation.min, max: c.exposureCompensation.max, step: c.exposureCompensation.step || 0.1, value: s.exposureCompensation ?? 0 }); }
+  else $("belKorr").disabled = true;
+  $("torch").disabled = !c.torch;
+  if (s.focusMode) $("fokusModus").value = s.focusMode;
+  $("steuerTxt").textContent = `focusMode: ${JSON.stringify(c.focusMode)}\nfocusDistance: ${JSON.stringify(c.focusDistance)}\nexposureCompensation: ${JSON.stringify(c.exposureCompensation)}\ntorch: ${c.torch}`;
+}
+
+async function setze(constraints, still = false) {
+  if (!track) return;
+  try {
+    await track.applyConstraints({ advanced: [constraints] });
+    Object.assign(sollConstraints, constraints);
+    if (!still) $("steuerTxt").textContent = `gesetzt: ${JSON.stringify(constraints)}\njetzt: ${JSON.stringify(track.getSettings())}`;
+  } catch (e) { fehler("applyConstraints " + JSON.stringify(constraints), e); }
+}
+
+async function standbild() {
+  if (!track) return;
+  const kopie = track.clone();
+  const rd = new MediaStreamTrackProcessor({ track: kopie, maxBufferSize: 1 }).readable.getReader();
+  const { value: frame } = await rd.read(); rd.cancel(); kopie.stop();
+  const c = new OffscreenCanvas(frame.displayWidth, frame.displayHeight);
+  c.getContext("2d").drawImage(frame, 0, 0); frame.close();
+  const blob = await c.convertToBlob({ type: "image/jpeg", quality: 0.95 });
+  const meta = { name: $("bildName").value || "standbild", art: "strom", groesse: [c.width, c.height], kartenrahmenPx: rahmenHoehe(), rahmenProzent: Number($("rahmen").value), abstandCm: Number($("abstandCm").value), schaerfe: scharfWert, kamera: track.getSettings() };
+  const r = await (await fetch("standbild", { method: "POST", body: blob, headers: { "content-type": "image/jpeg", "x-meta": JSON.stringify(meta) } })).json();
+  erg.standbilder.push({ ...meta, ...r }); merke();
+  $("steuerTxt").textContent = `Standbild: ${r.gespeichert} (${f0(blob.size / 1024)} kB)`;
+}
+
+async function takePhotoTest() {
+  if (!track || !("ImageCapture" in window)) return;
+  const z0 = frameZaehler, t0 = performance.now();
+  try {
+    const blob = await new ImageCapture(track).takePhoto();
+    const dauer = performance.now() - t0, bilderWaehrend = frameZaehler - z0;
+    const bmp = await createImageBitmap(blob);
+    const meta = { name: ($("bildName").value || "foto") + "-takePhoto", art: "takePhoto", groesse: [bmp.width, bmp.height], dauerMs: dauer, bilderImStromWaehrend: bilderWaehrend, kamera: track.getSettings() };
+    bmp.close();
+    const r = await (await fetch("standbild", { method: "POST", body: blob, headers: { "content-type": "image/jpeg", "x-meta": JSON.stringify(meta) } })).json();
+    erg.takePhoto.push({ ...meta, bytes: blob.size, ...r }); merke();
+    $("steuerTxt").textContent = JSON.stringify({ ...meta, bytes: blob.size }, null, 1);
+  } catch (e) { fehler("takePhoto", e); }
+}
+
+async function nahfokusPunkt() {
+  const werte = []; const t0 = performance.now();
+  while (performance.now() - t0 < 2000) { werte.push(scharfWert); await new Promise((ok) => setTimeout(ok, 300)); }
+  const e = { abstandCm: Number($("abstandCm").value), kartenrahmenPx: rahmenHoehe(), rahmenProzent: Number($("rahmen").value), strom: [frameB, frameH], schaerfeMedian: werte.sort((a, b) => a - b)[Math.floor(werte.length / 2)], kamera: track && track.getSettings() };
+  erg.nahfokus.push(e); merke();
+  $("steuerTxt").textContent = erg.nahfokus.map((n) => `${n.abstandCm} cm  Rahmen ${n.kartenrahmenPx} px  Schärfe ${f0(n.schaerfeMedian)}  Fokus ${n.kamera?.focusMode}/${n.kamera?.focusDistance}`).join("\n");
+}
+
+// ---------- T4 ----------
+function pipelineEinstellungen() {
+  return { strom: [frameB, frameH], gefragt: $("aufl").value, qualitaet: Number($("qual").value), zuschnitt: $("zuschnitt").value, rahmenProzent: Number($("rahmen").value), kartenrahmenPx: rahmenHoehe(), maxH: Number($("maxH").value), thread: $("thread").value, unterwegs: Number($("unterwegs").value), rate: Number($("rate").value) };
+}
+async function messe20() {
+  if (!senden) { $("pipeTxt").textContent = "erst Senden einschalten"; return; }
+  $("pipeTxt").textContent = "misst 20 s …";
+  messung = { tsAbstand: [], rtt: [], abholBisGesendet: [], aufnahmeBisGesendet: [], zeichnen: [], kodieren: [], bytes: [] };
+  const t0 = performance.now(), s0 = seq;
+  await new Promise((ok) => setTimeout(ok, 20000));
+  const m = messung; messung = null;
+  const z = (a) => { const s = a.filter((x) => x !== null && Number.isFinite(x)).sort((x, y) => x - y); const q = (p) => s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : null; return { n: s.length, p50: q(0.5), p95: q(0.95), max: q(1) }; };
+  const e = { zeit: new Date().toISOString(), einstellungen: pipelineEinstellungen(), gesendetProS: (seq - s0) / ((performance.now() - t0) / 1000), uhrPasst,
+    aufnahmeBisGesendet: z(m.aufnahmeBisGesendet), abholBisGesendet: z(m.abholBisGesendet), zeichnen: z(m.zeichnen), kodieren: z(m.kodieren), rtt: z(m.rtt), kB: z(m.bytes.map((b) => b / 1024)), kameraFps: 1000 / (z(m.tsAbstand).p50 || NaN) };
+  erg.pipeline.push(e); merke();
+  $("pipeTxt").textContent = JSON.stringify(e, null, 1);
+}
+
+// ---------- Aufnahme ----------
+function aufnahme() {
+  if (!wsOffen) return;
+  if (!aufnahmeAn) {
+    if (!senden) schalteSenden(true);
+    ws.send(JSON.stringify({ typ: "aufnahme_start", name: $("clipName").value || "clip", einstellungen: { ...pipelineEinstellungen(), kamera: aktuelleSettings, ua: navigator.userAgent } }));
+    aufnahmeAn = true; $("bRec").textContent = "Aufnahme stoppen"; $("bRec").classList.add("an");
+  } else {
+    ws.send(JSON.stringify({ typ: "aufnahme_stopp" }));
+    aufnahmeAn = false; $("bRec").textContent = "Aufnahme starten"; $("bRec").classList.remove("an");
+  }
+}
+function schalteSenden(an) { senden = an; $("bSenden").textContent = senden ? "Senden aus" : "Senden an"; $("bSenden").classList.toggle("an", senden); }
+
+// ---------- T6 Lebenszyklus ----------
+function leben(text) {
+  const z = `${new Date().toISOString().slice(11, 23)} ${text}`;
+  erg.lebenszyklus.push(z); merke();
+  $("lebenTxt").textContent = erg.lebenszyklus.slice(-40).join("\n");
+}
+document.addEventListener("visibilitychange", async () => {
+  leben(`visibility → ${document.visibilityState}${track ? ` (track ${track.readyState}, muted ${track.muted})` : ""}`);
+  if (document.visibilityState === "hidden") { settingsVorVerbergen = track ? track.getSettings() : null; return; }
+  sichtbarSeit = performance.now();
+  await wachHalten();
+  if (audio) { leben(`AudioContext: ${audio.state}`); audioAn(); }
+  if (track && track.readyState === "ended" && $("autoNeu").checked) { leben("track ended → Neustart"); const t0 = performance.now(); await starteKamera(); leben(`Neustart fertig nach ${f0(performance.now() - t0)} ms`); }
+});
+for (const ev of ["pagehide", "pageshow", "freeze", "resume", "blur", "focus"]) window.addEventListener(ev, () => leben(ev));
+document.addEventListener("freeze", () => leben("freeze (document)"));
+function vergleicheNachRueckkehr() {
+  if (!settingsVorVerbergen || !track) return;
+  const jetzt = track.getSettings(), diff = {};
+  for (const k of ["focusMode", "focusDistance", "torch", "exposureCompensation", "width", "height", "frameRate"]) if (JSON.stringify(jetzt[k]) !== JSON.stringify(settingsVorVerbergen[k])) diff[k] = [settingsVorVerbergen[k], jetzt[k]];
+  leben(`nach Rückkehr geändert: ${Object.keys(diff).length ? JSON.stringify(diff) : "nichts"}`);
+  settingsVorVerbergen = null;
+}
+
+// ---------- T7 Feedback ----------
+const MUSTER = { kurz: { vib: [60], toene: [[880, 0, 0.08]] }, doppelt: { vib: [60, 80, 60], toene: [[660, 0, 0.07], [660, 0.14, 0.07]] }, lang: { vib: [400], toene: [[330, 0, 0.4]] } };
+function feedback(art) {
+  const m = MUSTER[art], t = performance.now(), e = { zeit: new Date().toISOString(), art };
+  if ($("fbVib").checked) e.vibrate = "vibrate" in navigator ? navigator.vibrate(m.vib) : "fehlt";
+  if ($("fbTon").checked && audio) {
+    audioAn();
+    const t0 = audio.currentTime + 0.005;
+    for (const [hz, ab, dauer] of m.toene) {
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.frequency.value = hz; g.gain.setValueAtTime(0.25, t0 + ab); g.gain.exponentialRampToValueAtTime(0.001, t0 + ab + dauer);
+      o.connect(g).connect(audio.destination); o.start(t0 + ab); o.stop(t0 + ab + dauer + 0.02);
+    }
+    Object.assign(e, { audioState: audio.state, baseLatencyMs: audio.baseLatency * 1000, outputLatencyMs: (audio.outputLatency || 0) * 1000 });
+  }
+  e.aufrufMs = performance.now() - t;
+  erg.feedback.push(e); merke();
+  $("fbTxt").textContent = JSON.stringify(e, null, 1);
+}
+
+// ---------- T8 Dauerlast ----------
+let dauerTimer = null;
+async function dauerlast() {
+  if (dauerTimer) { clearInterval(dauerTimer); dauerTimer = null; $("bDauer").textContent = "Dauerlast starten"; $("bDauer").classList.remove("an"); return; }
+  if (!senden) schalteSenden(true);
+  const akku = "getBattery" in navigator ? await navigator.getBattery() : null;
+  let druck = "–";
+  if ("PressureObserver" in window) { try { const po = new PressureObserver((r) => { druck = r[r.length - 1].state; }); await po.observe("cpu", { sampleInterval: 2000 }); } catch (e) { druck = "n/a: " + e.message; } }
+  const t0 = performance.now(), z0 = { f: frameZaehler, s: seq }; let zl = { ...z0 };
+  const lauf = { start: new Date().toISOString(), einstellungen: pipelineEinstellungen(), punkte: [] };
+  erg.dauerlast.push(lauf);
+  $("bDauer").textContent = "Dauerlast stoppen"; $("bDauer").classList.add("an");
+  dauerTimer = setInterval(() => {
+    const min = (performance.now() - t0) / 60000;
+    const p = { min: +min.toFixed(2), kameraFps: (frameZaehler - zl.f) / 10, gesendetProS: (seq - zl.s) / 10, rttP95: st.rtt.p(0.95), kodierenP95: st.kodieren.p(0.95), akku: akku ? Math.round(akku.level * 100) : null, laedt: akku ? akku.charging : null, cpuDruck: druck, track: track ? track.readyState : "keiner" };
+    zl = { f: frameZaehler, s: seq };
+    lauf.punkte.push(p); merke();
+    $("dauerTxt").textContent = lauf.punkte.slice(-12).map((q) => `${q.min.toFixed(1)} min  fps ${f1(q.kameraFps)}  send ${f1(q.gesendetProS)}/s  rtt95 ${f0(q.rttP95)}  enc95 ${f0(q.kodierenP95)}  akku ${q.akku}%  cpu ${q.cpuDruck}`).join("\n");
+    if (min >= 15) { dauerlast(); feedback("lang"); }
+  }, 10000);
+}
+
+// ---------- Ergebnisse hochladen ----------
+async function hochladen() {
+  erg.umgebung = { zeit: new Date().toISOString(), ua: navigator.userAgent, bildschirm: [screen.width, screen.height, devicePixelRatio], speicherGB: navigator.deviceMemory, kerne: navigator.hardwareConcurrency };
+  try { if (navigator.userAgentData) erg.umgebung.uaDaten = await navigator.userAgentData.getHighEntropyValues(["model", "platformVersion", "fullVersionList"]); } catch {}
+  const body = { name: $("laufName").value || "lauf", notizen: $("notizen").value, ...erg };
+  try {
+    const r = await (await fetch("ergebnis", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+    $("hochTxt").textContent = `gespeichert: ${r.gespeichert}`;
+  } catch (e) { fehler("hochladen", e); }
+}
+
+// ---------- Verdrahtung ----------
+$("bStart").onclick = starteKamera;
+$("bStopp").onclick = stoppeKamera;
+$("bFaehig").onclick = faehigkeiten;
+$("bFpsMess").onclick = fpsMessen;
+$("fokusModus").onchange = () => setze($("fokusModus").value === "manual" ? { focusMode: "manual", focusDistance: Number($("fokusAbst").value) } : { focusMode: $("fokusModus").value });
+$("fokusAbst").oninput = () => { $("fokusModus").value = "manual"; setze({ focusMode: "manual", focusDistance: Number($("fokusAbst").value) }); };
+$("belKorr").oninput = () => setze({ exposureCompensation: Number($("belKorr").value) });
+$("torch").onchange = () => setze({ torch: $("torch").checked });
+$("bPoi").onclick = () => setze({ pointsOfInterest: [{ x: 0.5, y: 0.5 }] });
+$("bStand").onclick = standbild;
+$("bFoto").onclick = takePhotoTest;
+$("bNah").onclick = nahfokusPunkt;
+$("bSenden").onclick = () => schalteSenden(!senden);
+$("bMess20").onclick = messe20;
+$("bRec").onclick = aufnahme;
+for (const b of document.querySelectorAll("[data-fb]")) b.onclick = () => feedback(b.dataset.fb);
+$("bDauer").onclick = dauerlast;
+$("bHoch").onclick = hochladen;
+$("bLeeren").onclick = () => { if (confirm("Alle gemerkten Ergebnisse leeren?")) { erg = LEER(); merke(); } };
+for (const id of ["qual", "zuschnitt", "maxH", "thread", "unterwegs", "rate", "rahmen"]) $(id).addEventListener("change", () => { st.rtt.leer(); st.kodieren.leer(); st.zeichnen.leer(); st.bytes.leer(); st.abholBisGesendet.leer(); st.aufnahmeBisGesendet.leer(); st.aufnahmeBisEcho.leer(); });
+zeigeZaehler();
+$("lebenTxt").textContent = erg.lebenszyklus.slice(-40).join("\n");
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# Kamera-Sonde (Wegwerf, Issue #52). Läuft auf dem Pi im Netz von Caddy.
+services:
+  kamera-sonde:
+    build: .
+    container_name: kamera-sonde
+    restart: "no"
+    mem_limit: 192m
+    volumes:
+      - ${SONDE_DATEN:-/srv/data/yugioh/kamera-sonde}:/daten
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
