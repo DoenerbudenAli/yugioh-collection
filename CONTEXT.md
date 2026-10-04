@@ -18,6 +18,14 @@ _Avoid_: Kartendatenbank
 Die auf einer Karte gedruckte 8-stellige Nummer; eine Karte kann mehrere Passcodes haben (Alt-Arts), manche haben keinen.
 _Avoid_: ID, Kartennummer
 
+**Katalogstand**:
+Eine bestimmte Version des Katalogs, benannt nach der Datenbankversion der Quelle, aus der er übernommen wurde.
+_Avoid_: Katalogversion, Snapshot
+
+**Verwaiste Karte**:
+Eine Karte, die die Quelle nicht mehr führt; sie bleibt im Katalog, damit Exemplare und Listen ihren Bezug behalten.
+_Avoid_: gelöschte Karte
+
 ### Sammlung
 
 **Exemplar**:
