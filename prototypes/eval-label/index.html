@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eval-Set Labeln</title>
+<!-- Wegwerf-Prototyp zu Issue #47: Stapel-Listen anlegen, Aufnahmen in Clips schneiden, Manifest bauen. -->
+<style>
+:root { --bg:#f6f6f4; --fl:#fff; --tx:#1d1d1b; --mu:#6b6b66; --li:#d9d9d4; --ak:#2457c5; --gut:#1d7a3a; --warn:#b3261e; --gelb:#fff4c2; }
+* { box-sizing: border-box; }
+body { margin:0; font:14px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--tx); }
+header { display:flex; gap:4px; align-items:center; padding:8px 12px; background:var(--fl); border-bottom:1px solid var(--li); position:sticky; top:0; z-index:5; }
+header h1 { font-size:15px; margin:0 16px 0 0; }
+header button.tab { border:0; background:none; padding:6px 12px; border-radius:6px; font:inherit; cursor:pointer; }
+header button.tab.an { background:var(--ak); color:#fff; }
+#status { margin-left:auto; color:var(--mu); font-size:12px; }
+main { padding:12px; }
+section { display:none; } section.an { display:block; }
+.spalten { display:grid; grid-template-columns: 220px 1fr; gap:12px; }
+.karte { background:var(--fl); border:1px solid var(--li); border-radius:8px; padding:10px; }
+.liste button { display:block; width:100%; text-align:left; border:0; background:none; padding:6px 8px; border-radius:6px; cursor:pointer; font:inherit; }
+.liste button.an { background:#e3eafb; }
+.liste .mut { font-size:12px; }
+.mut { color:var(--mu); }
+.zeile { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0; }
+input[type=text], select { font:inherit; padding:4px 6px; border:1px solid var(--li); border-radius:5px; background:#fff; }
+button { font:inherit; padding:4px 10px; border:1px solid var(--li); border-radius:5px; background:#fff; cursor:pointer; }
+button.haupt { background:var(--ak); color:#fff; border-color:var(--ak); }
+#suche { font-size:18px; width:420px; padding:8px 10px; }
+#treffer { list-style:none; margin:4px 0; padding:0; max-width:620px; }
+#treffer li { display:flex; gap:8px; align-items:center; padding:4px; border-radius:6px; cursor:pointer; }
+#treffer li.an { background:#e3eafb; }
+#treffer img, .tab-karten img { width:40px; height:58px; object-fit:cover; border-radius:3px; background:#ddd; }
+#arten { display:flex; gap:8px; flex-wrap:wrap; }
+#arten figure { margin:0; text-align:center; cursor:pointer; }
+#arten img { width:110px; border-radius:4px; border:3px solid transparent; }
+#arten figure:hover img { border-color:var(--ak); }
+table { border-collapse:collapse; width:100%; }
+td, th { padding:3px 6px; border-bottom:1px solid var(--li); text-align:left; vertical-align:middle; }
+th { font-weight:600; font-size:12px; color:var(--mu); }
+.tab-karten select { padding:2px; }
+.warn { color:var(--warn); font-weight:600; }
+.gut { color:var(--gut); font-weight:600; }
+/* Labeln */
+#zeitleiste { width:100%; height:110px; display:block; background:#fff; border:1px solid var(--li); border-radius:6px; cursor:crosshair; }
+.labelraster { display:grid; grid-template-columns: minmax(300px, 420px) 1fr; gap:12px; margin-top:8px; }
+#bild { width:100%; border-radius:6px; background:#222; aspect-ratio: 803/1171; object-fit:contain; }
+#clips { max-height: 70vh; overflow:auto; }
+#clips tr.an { background:var(--gelb); }
+#clips img { height:64px; border-radius:3px; }
+.taste { display:inline-block; border:1px solid var(--li); border-bottom-width:2px; border-radius:4px; padding:0 5px; font-size:12px; background:#fff; }
+.vergleich { display:flex; gap:8px; align-items:flex-start; }
+.vergleich img { height:150px; border-radius:4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Eval-Set</h1>
+  <button class="tab an" data-tab="stapel">1 · Stapel</button>
+  <button class="tab" data-tab="labeln">2 · Labeln</button>
+  <button class="tab" data-tab="uebersicht">3 · Übersicht</button>
+  <span id="status"></span>
+</header>
+<main>
+
+<section id="stapel" class="an">
+  <div class="spalten">
+    <div class="karte liste"><button id="neuerStapel" class="haupt" style="text-align:center">+ Neuer Stapel</button><div id="stapelListe"></div></div>
+    <div class="karte" id="stapelEditor"><p class="mut">Links einen Stapel wählen oder „+ Neuer Stapel“.</p></div>
+  </div>
+</section>
+
+<section id="labeln">
+  <div class="spalten">
+    <div class="karte liste"><div class="zeile"><button id="neuLaden">Aktualisieren</button></div><div id="aufnahmeListe"></div></div>
+    <div class="karte" id="labelEditor"><p class="mut">Links eine Aufnahme wählen.</p></div>
+  </div>
+</section>
+
+<section id="uebersicht">
+  <div class="karte">
+    <div id="quotenTab"></div>
+    <div class="zeile"><button id="manifestBauen" class="haupt">Manifest bauen</button></div>
+    <pre id="manifestTxt"></pre>
+  </div>
+</section>
+
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const el = (tag, attrs = {}, ...kinder) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (k.startsWith("on")) e[k] = v; else if (v !== false && v != null) e.setAttribute(k, v === true ? "" : v); } e.append(...kinder.flat().filter((k) => k != null)); return e; };
+const api = async (pfad, opt = {}) => { const r = await fetch(pfad, { headers: { "content-type": "application/json" }, ...opt, body: opt.body ? JSON.stringify(opt.body) : undefined }); const j = await r.json(); if (!r.ok) throw new Error(j.fehler || r.status); return j; };
+const status = (t, schlecht) => { $("status").textContent = t; $("status").className = schlecht ? "warn" : ""; };
+const klein = (bildId) => bildId ? `/bild/klein/${bildId}.jpg` : "";
+
+const SPRACHEN = ["de", "en", "andere"];
+const SELTENHEIT = ["normal", "rare", "super", "ultra", "secret", "ghost", "starlight", "ultimate", "andere"];
+const PROXY = [["", "kein Proxy"], ["ygoprodeck-bild", "Proxy: Druck YGOProDeck-Bild"], ["scan", "Proxy: Druck aus Scan"], ["eigen", "Proxy: eigenes Artwork"]];
+const HUELLE = ["ohne", "mit"];
+const STOERUNG = [["", "–"], ["hand", "Hand davor"], ["halb", "halb im Bild"], ["verwackelt", "verwackelt"], ["leer", "leer"]];
+
+for (const b of document.querySelectorAll(".tab")) b.onclick = () => zeigeTab(b.dataset.tab);
+function zeigeTab(t) {
+  for (const b of document.querySelectorAll(".tab")) b.classList.toggle("an", b.dataset.tab === t);
+  for (const s of document.querySelectorAll("section")) s.classList.toggle("an", s.id === t);
+  if (t === "labeln") ladeAufnahmen();
+  if (t === "uebersicht") ladeQuoten();
+  if (t === "stapel") ladeStapel();
+}
+const auswahl = (werte, aktuell, onchange) => el("select", { onchange: (e) => onchange(e.target.value) },
+  werte.map((w) => { const [v, t] = Array.isArray(w) ? w : [w, w]; return el("option", { value: v, selected: (aktuell ?? "") === v }, t); }));
+
+// ================= 1 · Stapel =================
+let stapelAlle = [], stapel = null, speicherTimer = null;
+async function ladeStapel() {
+  stapelAlle = await api("/api/stapel");
+  $("stapelListe").replaceChildren(...stapelAlle.map((s) => el("button", { class: stapel && stapel.id === s.id ? "an" : null, onclick: () => { stapel = s; zeigeStapel(); ladeStapel(); } },
+    `${s.id} · ${s.name || "ohne Namen"}`, el("div", { class: "mut" }, `${s.karten.length} Karten`))));
+}
+$("neuerStapel").onclick = async () => {
+  const nr = Math.max(0, ...stapelAlle.map((s) => Number(s.id.slice(1)))) + 1;
+  stapel = { id: "S" + String(nr).padStart(2, "0"), name: "", naechste: 1, standard: { sprache: "de", seltenheit: "normal", proxy: "", huelle: "ohne", altkarte: false, aehnlich: false }, karten: [] };
+  await speichereStapel(true); await ladeStapel(); zeigeStapel();
+};
+async function speichereStapel(sofort) {
+  clearTimeout(speicherTimer);
+  const tu = async () => { try { await api(`/api/stapel/${stapel.id}`, { method: "PUT", body: stapel }); status(`${stapel.id} gespeichert`); } catch (e) { status("Speichern fehlgeschlagen: " + e.message, true); } };
+  if (sofort) return tu();
+  speicherTimer = setTimeout(tu, 300);
+}
+function neueKarte(karte, bildId) {
+  const d = stapel.standard;
+  const k = { ex: `${stapel.id}-${String(stapel.naechste++).padStart(2, "0")}`, passcode: karte ? karte.id : null, ygopro_id: karte ? karte.id : null, bild_id: karte ? bildId : null,
+    name: karte ? (karte.name_de && d.sprache === "de" ? `${karte.name_de} / ${karte.name}` : karte.name) : null,
+    sprache: d.sprache, seltenheit: d.seltenheit, proxy: d.proxy || null, huelle: d.huelle, altkarte: d.altkarte, aehnlich: d.aehnlich,
+    nicht_im_katalog: karte ? ["token", "skill"].includes(karte.frame) : true };
+  stapel.karten.push(k); speichereStapel(); zeigeKarten();
+  $("suche").value = ""; $("treffer").replaceChildren(); $("arten").replaceChildren(); $("suche").focus();
+}
+function zeigeStapel() {
+  const d = stapel.standard;
+  const std = (feld, werte) => auswahl(werte, d[feld] ?? "", (v) => { d[feld] = v; speichereStapel(); });
+  const haken = (feld, text) => el("label", {}, el("input", { type: "checkbox", checked: d[feld], onchange: (e) => { d[feld] = e.target.checked; speichereStapel(); } }), " " + text);
+  $("stapelEditor").replaceChildren(
+    el("div", { class: "zeile" }, el("b", {}, stapel.id), el("input", { type: "text", value: stapel.name, placeholder: "Name, z. B. DE Foils", size: 30, oninput: (e) => { stapel.name = e.target.value; speichereStapel(); } })),
+    el("div", { class: "zeile mut" }, "Standard für neue Karten:", std("sprache", SPRACHEN), std("seltenheit", SELTENHEIT), std("proxy", PROXY), std("huelle", HUELLE.map((h) => [h, "Hülle " + h])), haken("altkarte", "Altkarte"), haken("aehnlich", "ähnliches Artwork")),
+    el("div", { class: "zeile" }, el("input", { id: "suche", type: "text", placeholder: "Passcode (8 Ziffern) oder Name – Enter übernimmt", autocomplete: "off" }),
+      el("button", { onclick: nichtImKatalog }, "nicht im Katalog …"), el("button", { onclick: () => { const l = stapel.karten.at(-1); if (l) neueKarte(l.ygopro_id ? { id: l.ygopro_id, name: l.name, frame: null } : null, l.bild_id); } }, "gleiche Karte nochmal")),
+    el("ul", { id: "treffer" }), el("div", { id: "arten" }),
+    el("div", { id: "kartenTab" }));
+  $("suche").oninput = sucheLos; $("suche").onkeydown = sucheTaste; $("suche").focus();
+  zeigeKarten();
+}
+function nichtImKatalog() {
+  const name = prompt("Name der Karte (Token, Rush Duel, Skill, OCG …):"); if (!name) return;
+  const vorher = stapel.karten.length; neueKarte(null, null); const k = stapel.karten[vorher]; k.name = name; k.nicht_im_katalog = true; speichereStapel(); zeigeKarten();
+}
+let treffer = [], trefferAn = 0, sucheNr = 0;
+async function sucheLos() {
+  const q = $("suche").value, nr = ++sucheNr;
+  $("arten").replaceChildren();
+  if (!q.trim()) { $("treffer").replaceChildren(); return; }
+  const t = await api("/api/suche?q=" + encodeURIComponent(q)); if (nr !== sucheNr) return;
+  treffer = t; trefferAn = 0; zeigeTreffer();
+  if (/^\d{8}$/.test(q.trim()) && t[0]?.bild_vorschlag) waehle(0);  // voller Passcode → sofort übernehmen
+}
+function zeigeTreffer() {
+  $("treffer").replaceChildren(...treffer.map((k, i) => el("li", { class: i === trefferAn ? "an" : null, onclick: () => waehle(i) },
+    el("img", { src: klein(k.bild_vorschlag || k.bilder[0]), loading: "lazy" }), el("div", {}, el("b", {}, k.name_de || k.name), k.name_de ? el("div", { class: "mut" }, k.name) : null,
+      el("div", { class: "mut" }, `${k.typ} · ${k.id}${k.bilder.length > 1 ? ` · ${k.bilder.length} Artworks` : ""}`)))));
+}
+function sucheTaste(e) {
+  if (e.key === "ArrowDown") { trefferAn = Math.min(treffer.length - 1, trefferAn + 1); zeigeTreffer(); e.preventDefault(); }
+  else if (e.key === "ArrowUp") { trefferAn = Math.max(0, trefferAn - 1); zeigeTreffer(); e.preventDefault(); }
+  else if (e.key === "Enter" && treffer.length) { waehle(trefferAn); e.preventDefault(); }
+  else if (/^[1-9]$/.test(e.key) && artenOffen) { const f = $("arten").children[Number(e.key) - 1]; if (f) { f.click(); e.preventDefault(); } }
+}
+let artenOffen = false;
+function waehle(i) {
+  const k = treffer[i];
+  if (k.bild_vorschlag || k.bilder.length === 1) { artenOffen = false; return neueKarte(k, k.bild_vorschlag || k.bilder[0]); }
+  artenOffen = true;
+  $("treffer").replaceChildren(el("li", {}, el("b", {}, k.name_de || k.name), el("span", { class: "mut" }, " – welches Artwork? Klicken oder Ziffer tippen")));
+  $("arten").replaceChildren(...k.bilder.map((b, j) => el("figure", { onclick: () => { artenOffen = false; neueKarte(k, b); } }, el("img", { src: klein(b) }), el("figcaption", { class: "mut" }, `${j + 1} · ${b}`))));
+  $("suche").focus();
+}
+function zeigeKarten() {
+  const zeile = (k, i) => {
+    const setz = (feld) => (v) => { k[feld] = v === "" ? null : v; speichereStapel(); };
+    const haken = (feld) => el("input", { type: "checkbox", checked: k[feld], onchange: (e) => { k[feld] = e.target.checked; speichereStapel(); } });
+    const schiebe = (d) => { const j = i + d; if (j < 0 || j >= stapel.karten.length) return; [stapel.karten[i], stapel.karten[j]] = [stapel.karten[j], stapel.karten[i]]; speichereStapel(); zeigeKarten(); };
+    return el("tr", {}, el("td", {}, String(i + 1)), el("td", { class: "mut" }, k.ex), el("td", {}, k.bild_id ? el("img", { src: klein(k.bild_id) }) : ""),
+      el("td", {}, k.name, el("div", { class: "mut" }, k.passcode ?? "")),
+      el("td", {}, auswahl(SPRACHEN, k.sprache, setz("sprache"))), el("td", {}, auswahl(SELTENHEIT, k.seltenheit, setz("seltenheit"))),
+      el("td", {}, auswahl(PROXY, k.proxy ?? "", setz("proxy"))), el("td", {}, auswahl(HUELLE, k.huelle, setz("huelle"))),
+      el("td", {}, haken("altkarte")), el("td", {}, haken("aehnlich")), el("td", {}, haken("nicht_im_katalog")),
+      el("td", {}, el("button", { onclick: () => schiebe(-1), title: "nach oben" }, "↑"), el("button", { onclick: () => schiebe(1), title: "nach unten" }, "↓"),
+        el("button", { onclick: () => { if (confirm(`${k.ex} löschen?`)) { stapel.karten.splice(i, 1); speichereStapel(); zeigeKarten(); } } }, "✕")));
+  };
+  $("kartenTab").replaceChildren(el("p", {}, el("b", {}, `${stapel.karten.length} Karten`), el("span", { class: "mut" }, " – Reihenfolge = Scan-Reihenfolge, oberste Karte zuerst.")),
+    el("table", { class: "tab-karten" }, el("tr", {}, ["#", "Exemplar", "", "Karte", "Sprache", "Seltenheit", "Proxy", "Hülle", "Altkarte", "ähnlich", "nicht im Katalog", ""].map((t) => el("th", {}, t))),
+      stapel.karten.map(zeile)));
+}
+
+// ================= 2 · Labeln =================
+let aufnahme = null, lab = null, pos = 0, diffs = null, labTimer = null;
+async function ladeAufnahmen() {
+  status("lade Aufnahmen …");
+  const a = await api("/api/aufnahmen"); stapelAlle = await api("/api/stapel");
+  status(a.pi_fehler ? "Pi nicht erreichbar: " + a.pi_fehler : "", !!a.pi_fehler);
+  const kinder = a.lokal.map((x) => el("button", { class: aufnahme && aufnahme.ordner === x.ordner ? "an" : null, onclick: () => oeffneAufnahme(x.ordner) },
+    x.ordner, el("div", { class: "mut" }, x.stapel ? `${x.stapel} · ${x.haltung} · ${x.clips} Clips ${x.fertig ? "✓ fertig" : ""}` : "noch nicht gelabelt")));
+  if (a.nur_am_pi.length) {
+    kinder.push(el("p", { class: "mut" }, "Noch auf dem Pi:"));
+    for (const o of a.nur_am_pi) kinder.push(el("button", { onclick: async (e) => { e.target.disabled = true; status(`hole ${o} …`); try { await api("/api/holen", { method: "POST", body: { ordner: o } }); status(`${o} geholt`); } catch (err) { status(err.message, true); } ladeAufnahmen(); } }, "⇩ " + o));
+  }
+  $("aufnahmeListe").replaceChildren(...kinder);
+}
+$("neuLaden").onclick = ladeAufnahmen;
+
+async function oeffneAufnahme(ordner) {
+  status("lade " + ordner + " …");
+  aufnahme = await api("/api/aufnahme/" + ordner); pos = 0;
+  lab = aufnahme.labels || vorschlagKopf(ordner);
+  diffs = lab.analyse?.diffs?.length === aufnahme.frames.length ? lab.analyse.diffs : null;
+  zeigeLabelEditor(); ladeAufnahmen();
+  if (!diffs) { diffs = await berechneDiffs(); lab.analyse = { diffs }; }
+  if (!lab.clips.length) schlageClipsVor();
+  speichereLabels(); zeichne();
+}
+function vorschlagKopf(ordner) {
+  const n = ordner.toLowerCase(), s = n.match(/s(\d+)/);
+  return { ordner, stapel: s ? "S" + s[1].padStart(2, "0") : (stapelAlle.at(-1)?.id ?? null),
+    haltung: /halt|stativ|fest/.test(n) ? "halterung" : "frei", licht: /abend|dunkel/.test(n) ? "abend" : "normal",
+    huelle: /ohne/.test(n) ? "ohne" : /mit/.test(n) ? "mit" : "wie-stapel", art: /stoer|stör/.test(n) ? "stoer" : "stapel", fertig: false, clips: [] };
+}
+function speichereLabels() {
+  clearTimeout(labTimer);
+  labTimer = setTimeout(async () => { try { await api(`/api/labels/${lab.ordner}`, { method: "PUT", body: lab }); status(`${lab.ordner} gespeichert`); } catch (e) { status("Speichern fehlgeschlagen: " + e.message, true); } }, 300);
+}
+const bildUrl = (i) => `/aufnahmen/${aufnahme.ordner}/${aufnahme.frames[i].datei}`;
+
+async function berechneDiffs() {
+  // Mittlere Grauwert-Differenz zum Vorgänger auf 16×24 Pixeln – Maß für Bewegung („liegt ruhig“).
+  const c = document.createElement("canvas"); c.width = 16; c.height = 24; const g = c.getContext("2d", { willReadFrequently: true });
+  const n = aufnahme.frames.length, grau = new Array(n); let fertig = 0;
+  const lade = (i) => new Promise((ok) => { const im = new Image(); im.onload = () => { g.drawImage(im, 0, 0, 16, 24); const d = g.getImageData(0, 0, 16, 24).data; const a = new Float32Array(384); for (let p = 0; p < 384; p++) a[p] = (d[4 * p] + d[4 * p + 1] + d[4 * p + 2]) / 3; grau[i] = a; ok(); }; im.onerror = () => { grau[i] = null; ok(); }; im.src = bildUrl(i); });
+  let naechst = 0;
+  await Promise.all(Array.from({ length: 8 }, async () => { while (naechst < n) { const i = naechst++; await lade(i); if (++fertig % 50 === 0) status(`analysiere Bewegung ${fertig}/${n} …`); } }));
+  return grau.map((a, i) => { const b = grau[i - 1]; if (!a || !b) return 0; let s = 0; for (let p = 0; p < 384; p++) s += Math.abs(a[p] - b[p]); return +(s / 384).toFixed(2); });
+}
+function otsu(werte) {
+  const s = [...werte].sort((a, b) => a - b); let best = s[0], bestV = -1;
+  for (let k = 1; k < s.length; k++) { const a = s.slice(0, k), b = s.slice(k); const ma = a.reduce((x, y) => x + y, 0) / a.length, mb = b.reduce((x, y) => x + y, 0) / b.length; const v = a.length * b.length * (ma - mb) ** 2; if (v > bestV) { bestV = v; best = (s[k - 1] + s[k]) / 2; } }
+  return best;
+}
+function schlageClipsVor() {
+  const f = aufnahme.frames, n = f.length;
+  const logS = f.map((x) => Math.log((x.schaerfe ?? 1) + 1));
+  const schwelle = otsu(logS.filter((_, i) => i % Math.max(1, Math.floor(n / 400)) === 0));
+  let belegt = logS.map((v) => v > schwelle);
+  const laeufe = (arr) => { const r = []; let a = null; arr.forEach((b, i) => { if (b && a === null) a = i; if (!b && a !== null) { r.push([a, i - 1]); a = null; } }); if (a !== null) r.push([a, arr.length - 1]); return r; };
+  for (const [a, b] of laeufe(belegt.map((x) => !x))) if (b - a < 3 && a > 0 && b < n - 1) for (let i = a; i <= b; i++) belegt[i] = true;  // kurze Lücken schließen
+  const r = laeufe(belegt).filter(([a, b]) => b - a >= 4);
+  const imLauf = r.flatMap(([a, b]) => diffs.slice(a + 1, b + 1)).sort((x, y) => x - y);
+  const ruhig = Math.max(2.5, 1.5 * (imLauf[Math.floor(imLauf.length / 2)] ?? 2));
+  lab.clips = r.map(([a, b], k) => {
+    let liegt = null;
+    for (let i = a + 1; i <= b - 3; i++) if (diffs[i + 1] < ruhig && diffs[i + 2] < ruhig && diffs[i + 3] < ruhig) { liegt = i + 1; break; }
+    if (liegt === null) liegt = a;
+    const von = k === 0 ? 0 : Math.floor((r[k - 1][1] + a) / 2) + 1, bis = k === r.length - 1 ? n - 1 : Math.floor((b + r[k + 1][0]) / 2);
+    return { n: k + 1, von, bis, liegt, weg: Math.min(b + 1, bis), ex: null, stoerung: lab.art === "stoer" ? "hand" : null };
+  });
+  ordneKartenZu(); status(`${lab.clips.length} Clips vorgeschlagen (Schwelle Schärfe ${Math.exp(schwelle).toFixed(0)}, ruhig < ${ruhig.toFixed(1)})`);
+}
+function stapelVon(id) { return stapelAlle.find((s) => s.id === id); }
+function ordneKartenZu() {
+  const s = stapelVon(lab.stapel); if (lab.art === "stoer" || !s) { zeigeClips(); return; }
+  lab.clips.forEach((c, k) => { c.n = k + 1; c.ex = s.karten[k]?.ex ?? null; });
+  zeigeClips();
+}
+function aktClip() { return lab.clips.findIndex((c) => pos >= c.von && pos <= c.bis); }
+function zeigeLabelEditor() {
+  const kopf = (feld, werte) => auswahl(werte, lab[feld] ?? "", (v) => { lab[feld] = v || null; if (feld === "stapel" || feld === "art") ordneKartenZu(); speichereLabels(); zeigeClips(); });
+  $("labelEditor").replaceChildren(
+    el("div", { class: "zeile" }, el("b", {}, aufnahme.ordner), el("span", { class: "mut" }, `${aufnahme.frames.length} Bilder · Name „${aufnahme.kopf.name ?? ""}“`)),
+    el("div", { class: "zeile" }, kopf("stapel", [["", "Stapel?"], ...stapelAlle.map((s) => [s.id, `${s.id} · ${s.name} (${s.karten.length})`])]),
+      kopf("haltung", [["frei", "freihändig"], ["halterung", "Halterung"]]), kopf("licht", [["normal", "Licht normal"], ["abend", "Abendlicht"]]),
+      kopf("huelle", [["wie-stapel", "Hülle wie Stapel"], ["mit", "alle mit Hülle"], ["ohne", "alle ohne Hülle"]]), kopf("art", [["stapel", "Stapel-Lauf"], ["stoer", "Störclips"]]),
+      el("button", { onclick: () => { if (confirm("Alle Schnitte verwerfen und neu vorschlagen?")) { schlageClipsVor(); speichereLabels(); zeichne(); } } }, "Clips neu vorschlagen"),
+      el("button", { onclick: () => { ordneKartenZu(); speichereLabels(); } }, "Karten der Reihe nach zuordnen"),
+      el("label", {}, el("input", { type: "checkbox", checked: lab.fertig, onchange: (e) => { lab.fertig = e.target.checked; speichereLabels(); ladeAufnahmen(); } }), " fertig")),
+    el("canvas", { id: "zeitleiste", width: 1600, height: 110 }),
+    el("div", { class: "mut", style: "font-size:12px;margin:4px 0" }, el("span", { class: "taste" }, "←/→"), " 1 Bild ", el("span", { class: "taste" }, "⇧+←/→"), " 10 Bilder ",
+      el("span", { class: "taste" }, "N/P"), " nächster/voriger Clip ", el("span", { class: "taste" }, "L"), " liegt ruhig ", el("span", { class: "taste" }, "W"), " ist weg ",
+      el("span", { class: "taste" }, "T"), " Clip hier trennen ", el("span", { class: "taste" }, "V"), " mit nächstem verbinden ", el("span", { class: "taste" }, "X"), " Clip löschen ",
+      el("span", { class: "taste" }, "Leertaste"), " abspielen"),
+    el("div", { id: "zaehlung" }),
+    el("div", { class: "labelraster" }, el("div", {}, el("img", { id: "bild" }), el("div", { id: "bildInfo", class: "mut" })), el("div", {}, el("div", { id: "clipDetail" }), el("div", { id: "clips" }))));
+  const zl = $("zeitleiste");
+  const spring = (e) => { const r = zl.getBoundingClientRect(); geheZu(Math.round((e.clientX - r.left) / r.width * (aufnahme.frames.length - 1))); };
+  zl.onmousedown = (e) => { spring(e); zl.onmousemove = spring; }; window.onmouseup = () => { zl.onmousemove = null; };
+  zeigeClips(); zeichne();
+}
+function geheZu(i) { pos = Math.max(0, Math.min(aufnahme.frames.length - 1, i)); zeichne(); }
+function zeichne() {
+  if (!aufnahme || !$("zeitleiste")) return;
+  const c = $("zeitleiste"), g = c.getContext("2d"), n = aufnahme.frames.length, W = c.width, H = c.height, x = (i) => i / Math.max(1, n - 1) * W;
+  g.clearRect(0, 0, W, H);
+  lab.clips.forEach((cl, k) => { g.fillStyle = k % 2 ? "#e6eefc" : "#f1f5fd"; g.fillRect(x(cl.von), 0, x(cl.bis + 1) - x(cl.von), H);
+    g.fillStyle = "#1d7a3a"; g.fillRect(x(cl.liegt) - 1, 0, 3, H); g.fillStyle = "#b3261e"; g.fillRect(x(cl.weg) - 1, 0, 3, H);
+    g.fillStyle = "#333"; g.font = "12px system-ui"; g.fillText(String(cl.n), x(cl.von) + 3, 12); });
+  const s = aufnahme.frames.map((f) => Math.log((f.schaerfe ?? 1) + 1)), sMax = Math.max(...s, 1);
+  g.strokeStyle = "#2457c5"; g.beginPath(); s.forEach((v, i) => { const y = H - 4 - v / sMax * (H - 20); i ? g.lineTo(x(i), y) : g.moveTo(x(i), y); }); g.stroke();
+  if (diffs) { const dMax = Math.max(...diffs, 1); g.strokeStyle = "#c78a00"; g.beginPath(); diffs.forEach((v, i) => { const y = H - 2 - Math.min(1, v / dMax) * 30; i ? g.lineTo(x(i), y) : g.moveTo(x(i), y); }); g.stroke(); }
+  g.fillStyle = "#000"; g.fillRect(x(pos) - 1, 0, 2, H);
+  $("bild").src = bildUrl(pos);
+  for (const d of [1, 2, 3, -1]) { const j = pos + d; if (j >= 0 && j < n) new Image().src = bildUrl(j); }
+  const f = aufnahme.frames[pos];
+  $("bildInfo").textContent = `Bild ${pos} / ${n - 1} · Schärfe ${f.schaerfe?.toFixed(0) ?? "–"} · Bewegung ${diffs?.[pos] ?? "–"} · t ${f.t ? ((f.t - aufnahme.frames[0].t) / 1000).toFixed(2) + " s" : "–"}`;
+  zeigeClipDetail();
+  for (const tr of document.querySelectorAll("#clips tr[data-k]")) tr.classList.toggle("an", Number(tr.dataset.k) === aktClip());
+}
+function exInfo(ex) { for (const s of stapelAlle) { const k = s.karten.find((x) => x.ex === ex); if (k) return k; } return null; }
+function zeigeClipDetail() {
+  const k = aktClip(); const box = $("clipDetail"); if (!box) return;
+  if (k < 0) { box.replaceChildren(el("p", { class: "mut" }, "Zwischen den Clips.")); return; }
+  const c = lab.clips[k], info = exInfo(c.ex);
+  box.replaceChildren(el("div", { class: "vergleich" },
+    el("figure", { style: "margin:0" }, el("img", { src: bildUrl(c.liegt) }), el("figcaption", { class: "mut" }, `Clip ${c.n} · liegt ruhig (Bild ${c.liegt})`)),
+    el("figure", { style: "margin:0" }, info?.bild_id ? el("img", { src: klein(info.bild_id) }) : el("div", { class: "mut" }, "–"), el("figcaption", { class: "mut" }, info ? `${c.ex} · ${info.name}` : (c.stoerung ? "Störclip" : "keine Karte zugeordnet")))));
+}
+function zeigeClips() {
+  const s = stapelVon(lab.stapel), soll = s ? s.karten.length : null;
+  if ($("zaehlung")) $("zaehlung").replaceChildren(lab.art === "stoer" ? el("span", { class: "mut" }, `${lab.clips.length} Störclips`) :
+    el("span", { class: soll === lab.clips.length ? "gut" : "warn" }, `${lab.clips.length} Clips · Stapel hat ${soll ?? "?"} Karten${soll === lab.clips.length ? " ✓" : " – Schnitte prüfen (T trennen, V verbinden, X löschen)"}`));
+  if (!$("clips")) return;
+  const exOpt = [["", "– keine –"], ...(s ? s.karten.map((k) => [k.ex, `${k.ex} · ${k.name}`]) : [])];
+  $("clips").replaceChildren(el("table", {}, el("tr", {}, ["#", "liegt", "Karte (Soll)", "Exemplar", "liegt", "weg", "Störung"].map((t) => el("th", {}, t))),
+    lab.clips.map((c, k) => { const info = exInfo(c.ex);
+      return el("tr", { "data-k": k, onclick: (e) => { if (e.target.tagName !== "SELECT") geheZu(c.liegt); } }, el("td", {}, String(c.n)), el("td", {}, el("img", { src: bildUrl(c.liegt), loading: "lazy" })),
+        el("td", {}, info?.bild_id ? el("img", { src: klein(info.bild_id), loading: "lazy" }) : ""),
+        el("td", {}, auswahl(exOpt, c.ex ?? "", (v) => { c.ex = v || null; speichereLabels(); zeigeClips(); zeichne(); })),
+        el("td", {}, String(c.liegt)), el("td", {}, String(c.weg)),
+        el("td", {}, auswahl(STOERUNG, c.stoerung ?? "", (v) => { c.stoerung = v || null; speichereLabels(); })));
+    })));
+  zeichne();
+}
+function aendere(fn) { fn(); lab.clips.sort((a, b) => a.von - b.von); lab.clips.forEach((c, k) => { c.n = k + 1; }); speichereLabels(); zeigeClips(); }
+let spielt = null;
+document.addEventListener("keydown", (e) => {
+  if (!$("labeln").classList.contains("an") || !aufnahme || ["INPUT", "SELECT"].includes(e.target.tagName)) return;
+  const k = aktClip(), c = lab.clips[k], schritt = e.shiftKey ? 10 : 1;
+  const taste = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (taste === "ArrowRight") geheZu(pos + schritt);
+  else if (taste === "ArrowLeft") geheZu(pos - schritt);
+  else if (taste === "n") { const nx = lab.clips.find((x) => x.von > pos); if (nx) geheZu(nx.liegt); }
+  else if (taste === "p") { const vs = lab.clips.filter((x) => x.bis < (c ? c.von : pos)); if (vs.length) geheZu(vs.at(-1).liegt); }
+  else if (taste === "l" && c) aendere(() => { c.liegt = pos; });
+  else if (taste === "w" && c) aendere(() => { c.weg = pos; });
+  else if (taste === "t" && c && pos > c.von) aendere(() => { const neu = { ...c, von: pos, liegt: Math.max(pos, c.liegt), weg: Math.max(pos, c.weg) }; c.bis = pos - 1; c.liegt = Math.min(c.liegt, c.bis); c.weg = Math.min(c.weg, c.bis); lab.clips.push(neu); ordneKartenZuWennStapel(); });
+  else if (taste === "v" && c && lab.clips[k + 1]) aendere(() => { c.bis = lab.clips[k + 1].bis; c.weg = lab.clips[k + 1].weg; lab.clips.splice(k + 1, 1); ordneKartenZuWennStapel(); });
+  else if (taste === "x" && c) { if (confirm(`Clip ${c.n} löschen?`)) aendere(() => { lab.clips.splice(k, 1); ordneKartenZuWennStapel(); }); }
+  else if (taste === " ") { if (spielt) { clearInterval(spielt); spielt = null; } else spielt = setInterval(() => { if (pos >= aufnahme.frames.length - 1) { clearInterval(spielt); spielt = null; } else geheZu(pos + 1); }, 66); }
+  else return;
+  e.preventDefault();
+});
+function ordneKartenZuWennStapel() { if (lab.art !== "stoer") { lab.clips.sort((a, b) => a.von - b.von); const s = stapelVon(lab.stapel); if (s) lab.clips.forEach((c, k) => { c.ex = s.karten[k]?.ex ?? null; }); } }
+
+// ================= 3 · Übersicht =================
+async function ladeQuoten() {
+  const q = await api("/api/quoten");
+  $("quotenTab").replaceChildren(el("p", {}, `${q.exemplare} Exemplare in Stapeln · ${q.aufgenommen} aufgenommen · ${q.beide_haltungen} in beiden Haltungen (Ziel: alle)`),
+    el("table", { style: "max-width:520px" }, el("tr", {}, ["Schicht", "ist", "Minimum"].map((t) => el("th", {}, t))),
+      q.quoten.map((z) => el("tr", {}, el("td", {}, z.schicht), el("td", { class: z.minimum === null ? "" : z.ist >= z.minimum ? "gut" : "warn" }, String(z.ist)), el("td", { class: "mut" }, z.minimum ?? "alle vorhandenen")))));
+}
+$("manifestBauen").onclick = async () => { $("manifestTxt").textContent = "baut … (hasht alle Bilder)"; try { $("manifestTxt").textContent = JSON.stringify(await api("/api/manifest", { method: "POST" }), null, 1); } catch (e) { $("manifestTxt").textContent = "Fehler: " + e.message; } };
+
+ladeStapel();
+</script>
+</body>
+</html>
