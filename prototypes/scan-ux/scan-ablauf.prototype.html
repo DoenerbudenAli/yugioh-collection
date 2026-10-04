@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYP Scan-Ablauf</title>
+<style>
+  :root {
+    --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --line: #e7e5e4; --card: #ffffff;
+    --accent: #4f46e5; --ok: #15803d; --warn: #b45309; --bad: #b91c1c;
+    --okbg: #dcfce7; --warnbg: #fef3c7; --badbg: #fee2e2; --neutralbg: #f5f5f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1c1917; --fg: #f5f5f4; --muted: #a8a29e; --line: #44403c; --card: #292524;
+      --accent: #818cf8; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171;
+      --okbg: #14532d; --warnbg: #78350f; --badbg: #7f1d1d; --neutralbg: #3a3532;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: var(--badbg); color: var(--bad); vertical-align: middle; }
+  .intro { color: var(--muted); max-width: 820px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .full { grid-column: 1 / -1; }
+  button { font: inherit; font-size: 14px; padding: 6px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; margin: 0 6px 6px 0; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  .btnrow { margin-bottom: 8px; }
+  .btnrow > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .feedback { border-radius: 10px; padding: 14px 16px; font-size: 16px; font-weight: 600; }
+  .feedback small { display: block; font-weight: 400; font-size: 13px; margin-top: 4px; }
+  .fb-buchung { background: var(--okbg); color: var(--ok); }
+  .fb-pruefung { background: var(--warnbg); color: var(--warn); }
+  .fb-gesperrt, .fb-abbruch { background: var(--badbg); color: var(--bad); }
+  .fb-neutral { background: var(--neutralbg); color: var(--muted); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 12px 0 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; }
+  .empty { color: var(--muted); font-style: italic; }
+  .changed { background: var(--warnbg); border-radius: 4px; padding: 0 4px; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+  .tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .steps button.done { opacity: .45; }
+  .steps button.next { outline: 2px solid var(--accent); }
+  .log { font-size: 13px; color: var(--muted); max-height: 220px; overflow: auto; margin: 0; padding-left: 18px; }
+  .log li:first-child { color: var(--fg); }
+  label.cfg { display: inline-flex; align-items: center; gap: 6px; margin: 0 14px 8px 0; font-size: 14px; }
+  label.cfg input[type=number] { width: 64px; font: inherit; padding: 2px 4px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); color: var(--fg); }
+  .phase { font-size: 18px; font-weight: 700; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Scan-Ablauf <span class="badge">PROTOTYP – wegwerfen</span></h1>
+  <p class="intro">
+    <b>Frage (Ticket #7):</b> Wann wird aus Kamerabildern ein gebuchtes <b>Exemplar</b>, und wann nicht?
+    Ein <b>Scan</b> sammelt Bilder einer Karte, bis die Erkennung sicher ist (dann <b>gebucht</b>) oder es zu lange dauert bzw. die Karte vorher verschwindet (dann <b>Prüf-Warteschlange</b>).
+    Erst wenn die Karte das Bild <i>verlassen</i> hat, beginnt der nächste Scan. Jeder Knopf unter „Kamerabild“ ist <b>ein Bild</b> (≈ 100 ms) mit dem, was die Erkennung darin sieht.
+    Alles läuft nur im Speicher; nichts hiervon ist Produktionscode.
+  </p>
+
+  <div class="grid">
+    <section>
+      <h2>Was das Handy gerade meldet</h2>
+      <div id="feedback"></div>
+      <dl id="zustand"></dl>
+    </section>
+
+    <section>
+      <h2>Freies Spiel</h2>
+      <div class="btnrow"><span>Kamerabild (je ein Bild)</span><div id="frameButtons"></div></div>
+      <div class="btnrow"><span>Bedienung</span>
+        <button data-act="undo">Rückgängig</button>
+        <button data-act="proxy">Proxy-Modus umschalten</button>
+        <button data-act="markProxy">Letzten Scan als Proxy umschalten</button>
+      </div>
+      <div class="btnrow"><span>Heimrechner</span>
+        <button data-act="offline">Erkennung fällt aus</button>
+        <button data-act="online">Erkennung wieder da</button>
+      </div>
+      <div class="btnrow"><button data-act="reset">Alles zurücksetzen</button></div>
+    </section>
+
+    <section class="full">
+      <h2>Geführte Szenarien</h2>
+      <div class="tabs" id="tabs"></div>
+      <p id="scenarioText"></p>
+      <div class="steps" id="steps"></div>
+    </section>
+
+    <section>
+      <h2>Sammlung</h2>
+      <div id="sammlung"></div>
+    </section>
+
+    <section>
+      <h2>Prüf-Warteschlange</h2>
+      <div id="pruef"></div>
+    </section>
+
+    <section>
+      <h2>Verlauf der Scans</h2>
+      <div id="verlauf"></div>
+    </section>
+
+    <section>
+      <h2>Was zuletzt passiert ist</h2>
+      <ol class="log" id="log" reversed></ol>
+    </section>
+
+    <section class="full">
+      <h2>Stellschrauben</h2>
+      <div id="config"></div>
+      <p class="intro" style="font-size:13px">Änderungen gelten sofort für das freie Spiel; Szenarien starten immer mit diesen Werten.</p>
+    </section>
+  </div>
+</main>
+
+<!-- ================================================================
+     REINES MODUL: Scan-Ablauf als Reducer (zustand, aktion) => zustand
+     Kein DOM, kein document. Das ist der Teil, der in die Erfassung wandern könnte.
+     ================================================================ -->
+<script>
+const ScanAblauf = (() => {
+  const STANDARD_CONFIG = {
+    konsensBilder: 3,        // so viele Bilder in Folge mit derselben sicheren Top-Karte => buchen
+    sicherAb: 0.85,          // Konfidenz, ab der ein Bild als "sicher" gilt
+    mindestAbstand: 0.10,    // Abstand der Top-Karte zur zweiten
+    passcodeSofort: true,    // gelesener Passcode, der zur Top-Karte passt => sofort buchen
+    leerBilderBisWeg: 2,     // so viele leere Bilder in Folge => Karte hat das Bild verlassen
+    zeitlimitBilder: 8,      // nach so vielen Bildern ohne Entscheidung => Prüf-Warteschlange
+    wechselBilder: 2,        // so viele sichere Bilder einer ANDEREN Karte => gilt als neue Karte, ohne leeres Bild
+    bildMs: 100,
+  };
+
+  // Ein Katalog-Ausschnitt, nur damit Passcodes geprüft werden können.
+  const PASSCODES = {
+    'Dunkler Magier': ['46986414', '36996508'],
+    'Dunkles Magier-Mädchen': ['38033121'],
+    'Blauäugiger w. Drache': ['89631139'],
+    'Aschblüte & Freudiger Frühling': ['14558127'],
+  };
+
+  function anfang(config = STANDARD_CONFIG) {
+    return {
+      config: { ...config },
+      erkennungDa: true,
+      proxyModus: false,
+      phase: 'bereit',        // bereit | erkenne | wartetAufWeg | gesperrt
+      laufend: null,          // { scanId, bilder: [] }
+      wartetAuf: null,        // { scanId, karte } – Entscheidung gefallen, Karte liegt noch
+      leerZaehler: 0,
+      wechsel: { karte: null, zaehler: 0 },
+      bildNr: 0,
+      naechsteId: 1,
+      naechsterScan: 1,
+      exemplare: [],          // { id, karte, proxy, scanId }
+      scans: [],              // { id, ergebnis, karte, kandidaten, proxy, dauerMs, grund }
+      pruef: [],              // { id, scanId, kandidaten, grund, proxy }
+      meldung: { art: 'neutral', text: 'Bereit – Karte ins Bild halten', signal: '' },
+      log: [],
+    };
+  }
+
+  const top = (bild) => (bild && bild.kandidaten && bild.kandidaten[0]) || null;
+  const abstand = (bild) => {
+    const k = bild.kandidaten || [];
+    return k.length < 2 ? 1 : k[0].konfidenz - k[1].konfidenz;
+  };
+  const istSicher = (bild, c) => {
+    const t = top(bild);
+    return !!t && t.konfidenz >= c.sicherAb && abstand(bild) >= c.mindestAbstand;
+  };
+  const istLeer = (bild) => !!bild.leer;
+
+  function mitLog(s, text) { return { ...s, log: [text, ...s.log].slice(0, 60) }; }
+  function anzahl(s, karte) { return s.exemplare.filter(e => e.karte === karte).length; }
+
+  // Kandidaten über alle Bilder eines Scans: beste Konfidenz je Karte.
+  function gesammelteKandidaten(bilder) {
+    const best = {};
+    for (const b of bilder) for (const k of (b.kandidaten || [])) {
+      if (!best[k.karte] || best[k.karte] < k.konfidenz) best[k.karte] = k.konfidenz;
+    }
+    return Object.entries(best).map(([karte, konfidenz]) => ({ karte, konfidenz }))
+      .sort((a, b) => b.konfidenz - a.konfidenz).slice(0, 3);
+  }
+
+  function buchen(s, karte, grund) {
+    const { scanId, bilder } = s.laufend;
+    const proxy = s.proxyModus;
+    const exemplar = { id: s.naechsteId, karte, proxy, scanId };
+    const dauerMs = bilder.length * s.config.bildMs;
+    let n = {
+      ...s,
+      naechsteId: s.naechsteId + 1,
+      exemplare: [...s.exemplare, exemplar],
+      scans: [...s.scans, { id: scanId, ergebnis: 'gebucht', karte, kandidaten: gesammelteKandidaten(bilder), proxy, dauerMs, grund }],
+      phase: 'wartetAufWeg', laufend: null, wartetAuf: { scanId, karte }, leerZaehler: 0, wechsel: { karte: null, zaehler: 0 },
+    };
+    n.meldung = {
+      art: 'buchung',
+      text: `${karte}${proxy ? ' (Proxy)' : ''} gebucht – jetzt ${anzahl(n, karte)} Exemplar(e)`,
+      signal: `Kurzer hoher Ton · kurze Vibration · grüner Rahmen · nach ${dauerMs} ms (${grund})`,
+    };
+    return mitLog(n, `Scan ${scanId}: ${karte} gebucht nach ${bilder.length} Bild(ern) – ${grund}.`);
+  }
+
+  function inPruefung(s, grund, karteLiegtNoch) {
+    const { scanId, bilder } = s.laufend;
+    const kandidaten = gesammelteKandidaten(bilder);
+    const proxy = s.proxyModus;
+    const dauerMs = bilder.length * s.config.bildMs;
+    let n = {
+      ...s,
+      pruef: [...s.pruef, { id: s.naechsteId, scanId, kandidaten, grund, proxy }],
+      naechsteId: s.naechsteId + 1,
+      scans: [...s.scans, { id: scanId, ergebnis: 'in Prüfung', karte: null, kandidaten, proxy, dauerMs, grund }],
+      laufend: null, leerZaehler: 0, wechsel: { karte: null, zaehler: 0 },
+      phase: karteLiegtNoch ? 'wartetAufWeg' : 'bereit',
+      wartetAuf: karteLiegtNoch ? { scanId, karte: kandidaten[0] ? kandidaten[0].karte : null } : null,
+    };
+    n.meldung = {
+      art: 'pruefung',
+      text: `Unsicher – in die Prüf-Warteschlange (${grund})`,
+      signal: `Zwei tiefe Töne · doppelte Vibration · gelber Rahmen · Karte zur Seite legen`,
+    };
+    return mitLog(n, `Scan ${scanId}: in Prüf-Warteschlange – ${grund}. Kandidaten: ${kandidaten.map(k => k.karte).join(', ') || 'keine'}.`);
+  }
+
+  // Prüft nach jedem Bild im laufenden Scan, ob entschieden werden kann.
+  function entscheide(s) {
+    const c = s.config;
+    const bilder = s.laufend.bilder;
+    const letztes = bilder[bilder.length - 1];
+    const t = top(letztes);
+
+    if (c.passcodeSofort && t && letztes.passcode && (PASSCODES[t.karte] || []).includes(letztes.passcode) && t.konfidenz >= 0.5) {
+      return buchen(s, t.karte, 'Passcode bestätigt');
+    }
+    const nutzbar = bilder.filter(b => !b.unscharf);
+    const letzteK = nutzbar.slice(-c.konsensBilder);
+    if (letzteK.length === c.konsensBilder && letzteK.every(b => istSicher(b, c) && top(b).karte === top(letzteK[0]).karte)) {
+      return buchen(s, top(letzteK[0]).karte, `${c.konsensBilder} sichere Bilder in Folge`);
+    }
+    if (bilder.length >= c.zeitlimitBilder) {
+      return inPruefung(s, `nach ${bilder.length * c.bildMs} ms nicht sicher`, true);
+    }
+    return { ...s, meldung: { art: 'neutral', text: `Erkenne … (${bilder.length} Bild(er))`, signal: 'Kein Ton · Suchrahmen' } };
+  }
+
+  function starteScan(s, bild) {
+    const n = { ...s, phase: 'erkenne', laufend: { scanId: s.naechsterScan, bilder: [bild] }, naechsterScan: s.naechsterScan + 1, wartetAuf: null, leerZaehler: 0, wechsel: { karte: null, zaehler: 0 } };
+    return entscheide(mitLog(n, `Scan ${n.laufend.scanId} beginnt.`));
+  }
+
+  function bild(s, b) {
+    s = { ...s, bildNr: s.bildNr + 1 };
+    const c = s.config;
+
+    if (s.phase === 'gesperrt') {
+      return { ...s, meldung: { art: 'gesperrt', text: 'Scannen gesperrt – Heimrechner nicht erreichbar', signal: 'Bild wird verworfen, nicht gepuffert' } };
+    }
+
+    if (s.phase === 'bereit') {
+      if (istLeer(b)) return s;
+      if (b.unscharf) return mitLog({ ...s, meldung: { art: 'neutral', text: 'Etwas im Bild, aber nichts lesbar', signal: 'Kein Ton' } }, 'Unscharfes Bild ohne laufenden Scan – ignoriert.');
+      return starteScan(s, b);
+    }
+
+    if (s.phase === 'erkenne') {
+      if (istLeer(b)) {
+        const lz = s.leerZaehler + 1;
+        if (lz < c.leerBilderBisWeg) return { ...s, leerZaehler: lz };
+        const hatteKandidaten = s.laufend.bilder.some(x => (x.kandidaten || []).length);
+        if (hatteKandidaten) return inPruefung({ ...s, leerZaehler: lz }, 'Karte vor der Entscheidung weggenommen', false);
+        const id = s.laufend.scanId;
+        return mitLog({ ...s, phase: 'bereit', laufend: null, leerZaehler: 0, meldung: { art: 'neutral', text: 'Nichts erkannt – kein Scan', signal: 'Kein Ton' } }, `Scan ${id}: verworfen, nur unscharfe Bilder.`);
+      }
+      const n = { ...s, leerZaehler: 0, laufend: { ...s.laufend, bilder: [...s.laufend.bilder, b] } };
+      return entscheide(n);
+    }
+
+    if (s.phase === 'wartetAufWeg') {
+      if (istLeer(b)) {
+        const lz = s.leerZaehler + 1;
+        if (lz < c.leerBilderBisWeg) return { ...s, leerZaehler: lz };
+        return mitLog({ ...s, phase: 'bereit', wartetAuf: null, leerZaehler: 0, wechsel: { karte: null, zaehler: 0 }, meldung: { art: 'neutral', text: 'Bereit – nächste Karte', signal: 'Rahmen wird grau' } }, 'Karte hat das Bild verlassen.');
+      }
+      const t = top(b);
+      const anders = istSicher(b, c) && t.karte !== (s.wartetAuf && s.wartetAuf.karte);
+      if (!anders) return { ...s, leerZaehler: 0, wechsel: { karte: null, zaehler: 0 } };
+      const z = s.wechsel.karte === t.karte ? s.wechsel.zaehler + 1 : 1;
+      if (z < c.wechselBilder) return { ...s, leerZaehler: 0, wechsel: { karte: t.karte, zaehler: z } };
+      return starteScan(mitLog(s, `Andere Karte (${t.karte}) ${z}× sicher gesehen – gilt als Kartenwechsel.`), b);
+    }
+    return s;
+  }
+
+  function rueckgaengig(s) {
+    const letzter = [...s.scans].reverse().find(x => x.ergebnis === 'gebucht' || x.ergebnis === 'in Prüfung');
+    if (!letzter) return mitLog({ ...s, meldung: { art: 'neutral', text: 'Nichts zum Rückgängigmachen', signal: '' } }, 'Rückgängig: nichts da.');
+    const scans = s.scans.map(x => x.id === letzter.id ? { ...x, ergebnis: 'rückgängig' } : x);
+    const exemplare = s.exemplare.filter(e => e.scanId !== letzter.id);
+    const pruef = s.pruef.filter(p => p.scanId !== letzter.id);
+    // Liegt die Karte noch im Bild, muss sie trotzdem erst raus – sonst würde sie sofort wieder gebucht.
+    const wartetAuf = s.wartetAuf && s.wartetAuf.scanId === letzter.id ? { ...s.wartetAuf } : s.wartetAuf;
+    return mitLog({ ...s, scans, exemplare, pruef, wartetAuf,
+      meldung: { art: 'neutral', text: `Scan ${letzter.id} rückgängig${letzter.karte ? ` (${letzter.karte})` : ''}`, signal: 'Tiefer Ton · lange Vibration' } },
+      `Scan ${letzter.id} rückgängig gemacht.`);
+  }
+
+  function proxyUmschalten(s) {
+    const an = !s.proxyModus;
+    return mitLog({ ...s, proxyModus: an, meldung: { art: 'neutral', text: `Proxy-Modus ${an ? 'AN – alle folgenden Scans sind Proxies' : 'AUS'}`, signal: an ? 'Dauerhaftes Proxy-Banner' : '' } }, `Proxy-Modus ${an ? 'an' : 'aus'}.`);
+  }
+
+  function letztenAlsProxy(s) {
+    const letzter = [...s.scans].reverse().find(x => x.ergebnis === 'gebucht' || x.ergebnis === 'in Prüfung');
+    if (!letzter) return s;
+    const neu = !letzter.proxy;
+    return mitLog({
+      ...s,
+      scans: s.scans.map(x => x.id === letzter.id ? { ...x, proxy: neu } : x),
+      exemplare: s.exemplare.map(e => e.scanId === letzter.id ? { ...e, proxy: neu } : e),
+      pruef: s.pruef.map(p => p.scanId === letzter.id ? { ...p, proxy: neu } : p),
+      meldung: { art: 'neutral', text: `Scan ${letzter.id} ist ${neu ? 'jetzt ein Proxy' : 'kein Proxy mehr'}`, signal: '' },
+    }, `Scan ${letzter.id}: Proxy ${neu ? 'an' : 'aus'}.`);
+  }
+
+  function erkennung(s, da) {
+    if (!da) {
+      let n = { ...s, erkennungDa: false, phase: 'gesperrt' };
+      let text = 'Scannen gesperrt – Heimrechner nicht erreichbar';
+      if (s.laufend) { text = `Scan ${s.laufend.scanId} abgebrochen – Heimrechner weg. Karte bitte neu scannen.`; n = mitLog({ ...n, laufend: null }, `Scan ${s.laufend.scanId} ohne Entscheidung abgebrochen (nichts gebucht).`); }
+      return mitLog({ ...n, meldung: { art: 'abbruch', text, signal: 'Fehlerton · Scan-Ansicht gesperrt, Prüf-Warteschlange bleibt nutzbar' } }, 'Erkennung nicht erreichbar.');
+    }
+    const phase = s.wartetAuf ? 'wartetAufWeg' : 'bereit';
+    return mitLog({ ...s, erkennungDa: true, phase, leerZaehler: 0, meldung: { art: 'neutral', text: s.wartetAuf ? 'Erkennung wieder da – erst die liegende Karte entfernen' : 'Erkennung wieder da – bereit', signal: '' } }, 'Erkennung wieder erreichbar.');
+  }
+
+  function pruefen(s, pruefId, karte) {
+    const p = s.pruef.find(x => x.id === pruefId);
+    if (!p) return s;
+    let n = { ...s, pruef: s.pruef.filter(x => x.id !== pruefId) };
+    if (karte) {
+      n = { ...n, exemplare: [...n.exemplare, { id: n.naechsteId, karte, proxy: p.proxy, scanId: p.scanId }], naechsteId: n.naechsteId + 1,
+        scans: n.scans.map(x => x.id === p.scanId ? { ...x, ergebnis: 'gebucht (geprüft)', karte } : x) };
+      return mitLog({ ...n, meldung: { art: 'buchung', text: `Geprüft: ${karte} gebucht – jetzt ${anzahl(n, karte)} Exemplar(e)`, signal: '' } }, `Prüfung Scan ${p.scanId}: als ${karte} gebucht.`);
+    }
+    n = { ...n, scans: n.scans.map(x => x.id === p.scanId ? { ...x, ergebnis: 'verworfen (geprüft)' } : x) };
+    return mitLog({ ...n, meldung: { art: 'neutral', text: `Geprüft: Scan ${p.scanId} verworfen, kein Exemplar`, signal: '' } }, `Prüfung Scan ${p.scanId}: verworfen.`);
+  }
+
+  function reduziere(s, a) {
+    switch (a.typ) {
+      case 'bild': return bild(s, a.bild);
+      case 'rueckgaengig': return rueckgaengig(s);
+      case 'proxyModus': return proxyUmschalten(s);
+      case 'letztenAlsProxy': return letztenAlsProxy(s);
+      case 'erkennung': return erkennung(s, a.da);
+      case 'pruefen': return pruefen(s, a.pruefId, a.karte);
+      default: return s;
+    }
+  }
+
+  return { STANDARD_CONFIG, anfang, reduziere };
+})();
+</script>
+
+<!-- ================================================================
+     SEITE: dünne Hülle über dem Modul. Wegwerfen.
+     ================================================================ -->
+<script>
+const k = (karte, konfidenz) => ({ karte, konfidenz });
+const BILDER = {
+  dmKlar:    { titel: 'Dunkler Magier – klar', bild: { kandidaten: [k('Dunkler Magier', 0.96), k('Dunkles Magier-Mädchen', 0.41)], passcode: null } },
+  dmPass:    { titel: 'Dunkler Magier – Passcode gelesen', bild: { kandidaten: [k('Dunkler Magier', 0.91), k('Dunkles Magier-Mädchen', 0.44)], passcode: '46986414' } },
+  dmFoil:    { titel: 'Dunkler Magier – Foil spiegelt', bild: { kandidaten: [k('Dunkler Magier', 0.66), k('Dunkles Magier-Mädchen', 0.58)], passcode: null } },
+  dmmKlar:   { titel: 'Dunkles Magier-Mädchen – klar', bild: { kandidaten: [k('Dunkles Magier-Mädchen', 0.95), k('Dunkler Magier', 0.52)], passcode: null } },
+  bewdKlar:  { titel: 'Blauäugiger w. Drache – klar', bild: { kandidaten: [k('Blauäugiger w. Drache', 0.95), k('Blauäugiger Alt. w. Drache', 0.72)], passcode: null } },
+  ashKnapp:  { titel: 'Aschblüte (deutsch) – knapp', bild: { kandidaten: [k('Aschblüte & Freudiger Frühling', 0.79), k('Ghost Ogre & Schneehase', 0.74)], passcode: null } },
+  unscharf:  { titel: 'Bewegungsunschärfe', bild: { unscharf: true, kandidaten: [] } },
+  leer:      { titel: 'Leeres Bild', bild: { leer: true } },
+};
+
+const SZENARIEN = [
+  { titel: 'Glatter Fall', text: 'Karte rein, drei klare Bilder, gebucht. Karte raus, dieselbe Karte nochmal rein: zweites Exemplar. Achte darauf, dass zwischen den beiden Buchungen zwei leere Bilder nötig sind.',
+    schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'leer', 'leer', 'dmKlar', 'dmKlar', 'dmKlar', 'leer', 'leer'] },
+  { titel: 'Karte bleibt liegen', text: 'Nach der Buchung bleibt die Karte einfach im Bild. Es darf kein zweites Exemplar entstehen, egal wie viele Bilder kommen.',
+    schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'dmKlar', 'dmKlar', 'dmKlar', 'dmKlar', 'dmKlar'] },
+  { titel: 'Passcode-Abkürzung', text: 'Ein gelesener Passcode, der zur besten Karte passt, bucht schon nach dem ersten Bild. Das ist der schnellste Weg unter 500 ms.',
+    schritte: ['dmPass', 'dmPass', 'leer', 'leer'] },
+  { titel: 'Kartenwechsel ohne Lücke', text: 'Karte A wird gebucht, dann wird B direkt darübergelegt, ohne dass das Bild je leer ist. Zwei sichere Bilder von B gelten als Kartenwechsel.',
+    schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'bewdKlar', 'bewdKlar', 'bewdKlar', 'bewdKlar', 'leer', 'leer'] },
+  { titel: 'Ausreißer und Flackern', text: 'Während A liegt, kommt ein einzelnes falsches Bild (B) und ein einzelnes leeres Bild (Schatten der Hand). Beides darf keinen neuen Scan auslösen.',
+    schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'bewdKlar', 'dmKlar', 'leer', 'dmKlar', 'dmKlar'] },
+  { titel: 'Foil – unsicher', text: 'Die Foil spiegelt, die Erkennung schwankt zwischen zwei Karten. Nach dem Zeitlimit landet der Scan in der Prüf-Warteschlange, die Karte muss dann raus. Danach in der Warteschlange den richtigen Kandidaten wählen.',
+    schritte: ['dmFoil', 'dmFoil', 'unscharf', 'dmFoil', 'dmFoil', 'dmFoil', 'dmFoil', 'dmFoil', 'leer', 'leer'] },
+  { titel: 'Zu schnell weggenommen', text: 'Die Karte ist kurz drin, wird aber weggezogen, bevor die Erkennung sicher ist. Weil es Kandidaten gab, geht der Scan in die Prüf-Warteschlange statt verloren.',
+    schritte: ['ashKnapp', 'ashKnapp', 'leer', 'leer'] },
+  { titel: 'Fehlscan rückgängig', text: 'Die Erkennung bucht sicher die falsche Karte. „Rückgängig“ entfernt das Exemplar. Die Karte muss trotzdem erst raus, sonst würde sie gleich wieder gebucht.',
+    schritte: ['dmmKlar', 'dmmKlar', 'dmmKlar', '#rueckgaengig', 'dmmKlar', 'dmmKlar', 'leer', 'leer'] },
+  { titel: 'Proxy-Stapel', text: 'Ein Stapel Proxies: Proxy-Modus an, zwei Karten scannen, Modus aus, eine echte Karte. Proxies sind für die Erkennung nicht von Originalen zu unterscheiden.',
+    schritte: ['#proxyModus', 'bewdKlar', 'bewdKlar', 'bewdKlar', 'leer', 'leer', 'dmKlar', 'dmKlar', 'dmKlar', 'leer', 'leer', '#proxyModus', 'bewdKlar', 'bewdKlar', 'bewdKlar'] },
+  { titel: 'Heimrechner fällt aus', text: 'Mitten im Scan ist die Erkennung weg. Der laufende Scan wird abgebrochen (nichts gepuffert). Kommt sie zurück, während die gebuchte Karte noch liegt, wird diese nicht doppelt gebucht.',
+    schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'leer', 'leer', 'bewdKlar', '#offline', 'bewdKlar', '#online', 'bewdKlar', 'bewdKlar', 'bewdKlar'] },
+];
+
+const AKTIONEN = {
+  '#rueckgaengig': { titel: 'Rückgängig', aktion: { typ: 'rueckgaengig' } },
+  '#proxyModus': { titel: 'Proxy-Modus umschalten', aktion: { typ: 'proxyModus' } },
+  '#offline': { titel: 'Erkennung fällt aus', aktion: { typ: 'erkennung', da: false } },
+  '#online': { titel: 'Erkennung wieder da', aktion: { typ: 'erkennung', da: true } },
+};
+const schrittInfo = (id) => AKTIONEN[id] || { titel: '📷 ' + BILDER[id].titel, aktion: { typ: 'bild', bild: BILDER[id].bild } };
+
+let config = { ...ScanAblauf.STANDARD_CONFIG };
+let zustand = ScanAblauf.anfang(config);
+let vorher = null;
+let aktivSzenario = 0, schrittIndex = 0;
+
+function tu(aktion) { vorher = zustand; zustand = ScanAblauf.reduziere(zustand, aktion); render(); }
+
+const PHASEN = {
+  bereit: 'Bereit – wartet auf eine Karte',
+  erkenne: 'Erkenne – sammelt Bilder der Karte',
+  wartetAufWeg: 'Entschieden – wartet, bis die Karte das Bild verlässt',
+  gesperrt: 'Gesperrt – Heimrechner nicht erreichbar',
+};
+const esc = (x) => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const mark = (feld, html) => (vorher && JSON.stringify(vorher[feld]) !== JSON.stringify(zustand[feld])) ? `<span class="changed">${html}</span>` : html;
+const kand = (ks) => ks.map(x => `${esc(x.karte)} (${Math.round(x.konfidenz * 100)} %)`).join(', ') || '–';
+
+function render() {
+  const s = zustand;
+  document.getElementById('feedback').innerHTML =
+    `<div class="feedback fb-${s.meldung.art}">${esc(s.meldung.text)}<small>${esc(s.meldung.signal || ' ')}</small></div>`;
+
+  const laufend = s.laufend ? `Scan ${s.laufend.scanId}: ${s.laufend.bilder.length} Bild(er) – zuletzt ${kand(s.laufend.bilder[s.laufend.bilder.length - 1].kandidaten || [])}` : '–';
+  document.getElementById('zustand').innerHTML = `
+    <dt>Phase</dt><dd class="phase">${mark('phase', esc(PHASEN[s.phase]))}</dd>
+    <dt>Laufender Scan</dt><dd>${mark('laufend', laufend)}</dd>
+    <dt>Wartet auf Wegnahme von</dt><dd>${mark('wartetAuf', s.wartetAuf ? esc(s.wartetAuf.karte || 'unbekannter Karte') + ` (Scan ${s.wartetAuf.scanId})` : '–')}</dd>
+    <dt>Leere Bilder in Folge</dt><dd>${mark('leerZaehler', s.leerZaehler)} von ${s.config.leerBilderBisWeg}</dd>
+    <dt>Möglicher Kartenwechsel</dt><dd>${mark('wechsel', s.wechsel.karte ? `${esc(s.wechsel.karte)} ${s.wechsel.zaehler}× von ${s.config.wechselBilder}` : '–')}</dd>
+    <dt>Proxy-Modus</dt><dd>${mark('proxyModus', s.proxyModus ? '<b>AN</b>' : 'aus')}</dd>
+    <dt>Erkennung</dt><dd>${mark('erkennungDa', s.erkennungDa ? 'erreichbar' : '<b>nicht erreichbar</b>')}</dd>
+    <dt>Bilder insgesamt</dt><dd>${s.bildNr}</dd>`;
+
+  const proKarte = {};
+  for (const e of s.exemplare) { proKarte[e.karte] = proKarte[e.karte] || { n: 0, p: 0 }; proKarte[e.karte].n++; if (e.proxy) proKarte[e.karte].p++; }
+  const zeilen = Object.entries(proKarte).map(([karte, v]) => `<tr><td>${esc(karte)}</td><td>${v.n}</td><td>${v.p || ''}</td></tr>`).join('');
+  document.getElementById('sammlung').innerHTML = mark('exemplare', zeilen ? `<table><tr><th>Karte</th><th>Exemplare</th><th>davon Proxy</th></tr>${zeilen}</table>` : '<p class="empty">Noch keine Exemplare.</p>');
+
+  document.getElementById('pruef').innerHTML = mark('pruef', s.pruef.length ? s.pruef.map(p => `
+    <div style="border-bottom:1px solid var(--line);padding:6px 0">
+      <div><b>Scan ${p.scanId}</b>${p.proxy ? ' · Proxy' : ''} – ${esc(p.grund)}</div>
+      <div style="margin:4px 0">${p.kandidaten.map(x => `<button data-pruef="${p.id}" data-karte="${esc(x.karte)}">Ist ${esc(x.karte)} (${Math.round(x.konfidenz * 100)} %)</button>`).join('')}
+      <button data-pruef="${p.id}" data-karte="">Verwerfen</button></div>
+    </div>`).join('') : '<p class="empty">Leer.</p>');
+
+  document.getElementById('verlauf').innerHTML = s.scans.length ? `<table><tr><th>Scan</th><th>Ergebnis</th><th>Karte</th><th>Dauer</th><th>Proxy</th></tr>${
+    [...s.scans].reverse().map(x => `<tr><td>${x.id}</td><td>${esc(x.ergebnis)}</td><td>${esc(x.karte || '–')}</td><td>${x.dauerMs} ms</td><td>${x.proxy ? 'ja' : ''}</td></tr>`).join('')}</table>` : '<p class="empty">Noch keine Scans.</p>';
+
+  document.getElementById('log').innerHTML = s.log.map(l => `<li>${esc(l)}</li>`).join('');
+  renderSchritte();
+}
+
+function renderTabs() {
+  document.getElementById('tabs').innerHTML = SZENARIEN.map((sz, i) => `<button data-tab="${i}" class="${i === aktivSzenario ? 'active' : ''}">${esc(sz.titel)}</button>`).join('');
+}
+function renderSchritte() {
+  const sz = SZENARIEN[aktivSzenario];
+  document.getElementById('scenarioText').textContent = sz.text;
+  document.getElementById('steps').innerHTML = sz.schritte.map((id, i) =>
+    `<button data-step="${i}" class="${i < schrittIndex ? 'done' : i === schrittIndex ? 'next' : ''}" ${i !== schrittIndex ? 'disabled' : ''}>${i + 1}. ${esc(schrittInfo(id).titel)}</button>`).join('');
+}
+function starteSzenario(i) { aktivSzenario = i; schrittIndex = 0; vorher = null; zustand = ScanAblauf.anfang(config); renderTabs(); render(); }
+
+function renderConfig() {
+  const felder = [
+    ['konsensBilder', 'Sichere Bilder in Folge zum Buchen'], ['sicherAb', 'Sicher ab Konfidenz'], ['mindestAbstand', 'Mindestabstand zur 2. Karte'],
+    ['leerBilderBisWeg', 'Leere Bilder bis „Karte weg“'], ['zeitlimitBilder', 'Zeitlimit in Bildern'], ['wechselBilder', 'Bilder für Kartenwechsel'],
+  ];
+  document.getElementById('config').innerHTML = felder.map(([key, label]) =>
+    `<label class="cfg">${label} <input type="number" step="${config[key] < 1 ? 0.01 : 1}" data-cfg="${key}" value="${config[key]}"></label>`).join('') +
+    `<label class="cfg"><input type="checkbox" data-cfg="passcodeSofort" ${config.passcodeSofort ? 'checked' : ''}> Passcode bucht sofort</label>`;
+}
+
+document.getElementById('frameButtons').innerHTML = Object.entries(BILDER).map(([id, b]) => `<button data-frame="${id}">${esc(b.titel)}</button>`).join('');
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('button'); if (!t) return;
+  if (t.dataset.frame) tu({ typ: 'bild', bild: BILDER[t.dataset.frame].bild });
+  else if (t.dataset.act === 'undo') tu({ typ: 'rueckgaengig' });
+  else if (t.dataset.act === 'proxy') tu({ typ: 'proxyModus' });
+  else if (t.dataset.act === 'markProxy') tu({ typ: 'letztenAlsProxy' });
+  else if (t.dataset.act === 'offline') tu({ typ: 'erkennung', da: false });
+  else if (t.dataset.act === 'online') tu({ typ: 'erkennung', da: true });
+  else if (t.dataset.act === 'reset') { zustand = ScanAblauf.anfang(config); vorher = null; schrittIndex = 0; render(); }
+  else if (t.dataset.pruef) tu({ typ: 'pruefen', pruefId: Number(t.dataset.pruef), karte: t.dataset.karte || null });
+  else if (t.dataset.tab) starteSzenario(Number(t.dataset.tab));
+  else if (t.dataset.step) { const id = SZENARIEN[aktivSzenario].schritte[schrittIndex]; schrittIndex++; tu(schrittInfo(id).aktion); }
+});
+document.addEventListener('change', (e) => {
+  const key = e.target.dataset.cfg; if (!key) return;
+  config = { ...config, [key]: e.target.type === 'checkbox' ? e.target.checked : Number(e.target.value) };
+  zustand = { ...zustand, config: { ...config } }; render();
+});
+
+renderTabs(); renderConfig(); starteSzenario(0);
+</script>
+</body>
+</html>
