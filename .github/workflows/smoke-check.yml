@@ -1,0 +1,10 @@
+# Temporär für den Smoke-Test (Ticket #11): echter Check „smoke“.
+name: smoke-check
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Smoke-Check ok"
