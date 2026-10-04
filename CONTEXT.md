@@ -41,6 +41,16 @@ _Avoid_: Foto, Aufnahme
 Der Abschluss eines Scans, der ein Exemplar in der Sammlung anlegt; nur eine Buchung erzeugt ein Exemplar.
 _Avoid_: Speichern, Hinzufügen
 
+**Falschbuchung**:
+Eine Buchung auf eine andere Karte als die des gescannten Exemplars; jede Buchung eines Exemplars, dessen Karte nicht im Katalog ist, ist ebenfalls eine Falschbuchung.
+_Avoid_: Fehlerkennung (eine Erkennung darf irren, eine Buchung nicht)
+
+**Doppelbuchung**:
+Zwei Buchungen für dasselbe Exemplar.
+
+**Verlorenes Exemplar**:
+Ein Exemplar, das im Kamerabild lag, ohne dass eine Buchung oder ein Eintrag in der Prüf-Warteschlange entstanden ist.
+
 **Scan-Sitzung**:
 Die Zeit vom Öffnen bis zum Schließen der Scan-Ansicht; Rückgängig wirkt nur innerhalb einer Scan-Sitzung.
 _Avoid_: Session, Scan-Vorgang
