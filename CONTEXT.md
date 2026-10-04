@@ -79,6 +79,10 @@ Eine von der Community kuratierte Liste von Karten, aus der im 1-gegen-1 gedraft
 **Deckliste**:
 Eine Liste von Karten mit Mengen für ein Deck.
 
+**Eigene Liste**:
+Eine von Hand angelegte und gepflegte Liste von Karten mit Mengen, ohne externe Quelle; sie kann aus einem Filterergebnis als einmalige Kopie entstehen.
+_Avoid_: gespeicherter Filter, Sammelliste
+
 **Fehlkarten**:
 Die Karten einer Liste, von denen die Sammlung weniger Exemplare hat, als die Liste verlangt.
 _Avoid_: Wants, fehlende Karten
