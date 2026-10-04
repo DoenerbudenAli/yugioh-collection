@@ -211,7 +211,7 @@ const ScanAblauf = (() => {
     n.meldung = {
       art: 'buchung',
       text: `${karte}${proxy ? ' (Proxy)' : ''} gebucht – jetzt ${anzahl(n, karte)} Exemplar(e)`,
-      signal: `Kurzer hoher Ton · kurze Vibration · grüner Rahmen · nach ${dauerMs} ms (${grund})`,
+      signal: `Kurzer hoher Ton · grüner Rahmen · Name + Anzahl groß · nach ${dauerMs} ms (${grund})`,
     };
     return mitLog(n, `Scan ${scanId}: ${karte} gebucht nach ${bilder.length} Bild(ern) – ${grund}.`);
   }
@@ -221,9 +221,14 @@ const ScanAblauf = (() => {
     const kandidaten = gesammelteKandidaten(bilder);
     const proxy = s.proxyModus;
     const dauerMs = bilder.length * s.config.bildMs;
+    // Kontext für die spätere Prüfung: was war der Scan davor, und war die Ablage dazwischen frei?
+    const davor = [...s.scans].reverse().find(x => x.ergebnis !== 'rückgängig');
+    const kontext = davor
+      ? `Davor: Scan ${davor.id} – ${davor.karte || 'unklar'} (${davor.ergebnis}); ${s.laufend.perWechsel ? 'OHNE freie Ablage dazwischen (Kartenwechsel)' : 'Ablage war dazwischen frei'}`
+      : 'Erster Scan der Sitzung';
     let n = {
       ...s,
-      pruef: [...s.pruef, { id: s.naechsteId, scanId, kandidaten, grund, proxy }],
+      pruef: [...s.pruef, { id: s.naechsteId, scanId, kandidaten, grund, proxy, kontext }],
       naechsteId: s.naechsteId + 1,
       scans: [...s.scans, { id: scanId, ergebnis: 'in Prüfung', karte: null, kandidaten, proxy, dauerMs, grund }],
       laufend: null, leerZaehler: 0, wechsel: { karte: null, zaehler: 0 },
@@ -233,7 +238,7 @@ const ScanAblauf = (() => {
     n.meldung = {
       art: 'pruefung',
       text: `Unsicher – in die Prüf-Warteschlange (${grund})`,
-      signal: `Zwei tiefe Töne · doppelte Vibration · gelber Rahmen · Karte zur Seite legen`,
+      signal: `Zwei tiefe Töne · gelber Rahmen · Karte zur Seite legen`,
     };
     return mitLog(n, `Scan ${scanId}: in Prüf-Warteschlange – ${grund}. Kandidaten: ${kandidaten.map(k => k.karte).join(', ') || 'keine'}.`);
   }
@@ -259,8 +264,8 @@ const ScanAblauf = (() => {
     return { ...s, meldung: { art: 'neutral', text: `Erkenne … (${bilder.length} Bild(er))`, signal: 'Kein Ton · Suchrahmen' } };
   }
 
-  function starteScan(s, bild) {
-    const n = { ...s, phase: 'erkenne', laufend: { scanId: s.naechsterScan, bilder: [bild] }, naechsterScan: s.naechsterScan + 1, wartetAuf: null, leerZaehler: 0, wechsel: { karte: null, zaehler: 0 } };
+  function starteScan(s, bild, perWechsel = false) {
+    const n = { ...s, phase: 'erkenne', laufend: { scanId: s.naechsterScan, bilder: [bild], perWechsel }, naechsterScan: s.naechsterScan + 1, wartetAuf: null, leerZaehler: 0, wechsel: { karte: null, zaehler: 0 } };
     return entscheide(mitLog(n, `Scan ${n.laufend.scanId} beginnt.`));
   }
 
@@ -302,7 +307,7 @@ const ScanAblauf = (() => {
       if (!anders) return { ...s, leerZaehler: 0, wechsel: { karte: null, zaehler: 0 } };
       const z = s.wechsel.karte === t.karte ? s.wechsel.zaehler + 1 : 1;
       if (z < c.wechselBilder) return { ...s, leerZaehler: 0, wechsel: { karte: t.karte, zaehler: z } };
-      return starteScan(mitLog(s, `Andere Karte (${t.karte}) ${z}× sicher gesehen – gilt als Kartenwechsel.`), b);
+      return starteScan(mitLog(s, `Andere Karte (${t.karte}) ${z}× sicher gesehen – gilt als Kartenwechsel.`), b, true);
     }
     return s;
   }
@@ -316,7 +321,7 @@ const ScanAblauf = (() => {
     // Liegt die Karte noch im Bild, muss sie trotzdem erst raus – sonst würde sie sofort wieder gebucht.
     const wartetAuf = s.wartetAuf && s.wartetAuf.scanId === letzter.id ? { ...s.wartetAuf } : s.wartetAuf;
     return mitLog({ ...s, scans, exemplare, pruef, wartetAuf,
-      meldung: { art: 'neutral', text: `Scan ${letzter.id} rückgängig${letzter.karte ? ` (${letzter.karte})` : ''}`, signal: 'Tiefer Ton · lange Vibration' } },
+      meldung: { art: 'neutral', text: `Scan ${letzter.id} rückgängig${letzter.karte ? ` (${letzter.karte})` : ''}`, signal: 'Tiefer Ton' } },
       `Scan ${letzter.id} rückgängig gemacht.`);
   }
 
@@ -403,6 +408,10 @@ const SZENARIEN = [
     schritte: ['dmPass', 'dmPass', 'leer', 'leer'] },
   { titel: 'Kartenwechsel ohne Lücke', text: 'Karte A wird gebucht, dann wird B direkt darübergelegt, ohne dass das Bild je leer ist. Zwei sichere Bilder von B gelten als Kartenwechsel.',
     schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'bewdKlar', 'bewdKlar', 'bewdKlar', 'bewdKlar', 'leer', 'leer'] },
+  { titel: 'Verdeckt, wieder gezeigt', text: 'Dunkler Magier wird gebucht. Dann verdeckt ihn die Hand (unscharfe Bilder), danach ist er wieder klar zu sehen. Weil die Ablage nie frei war, entsteht kein neuer Scan – weder Buchung noch Prüf-Warteschlange. Erst wenn die Ablage wirklich frei war, zählt er erneut.',
+    schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'unscharf', 'unscharf', 'unscharf', 'dmKlar', 'dmFoil', 'dmKlar', 'dmKlar', 'leer', 'leer', 'dmKlar', 'dmKlar', 'dmKlar'] },
+  { titel: 'Prüfung mit Kontext', text: 'Dunkler Magier wird gebucht, dann wird die Foil-Variante direkt darübergeschoben und bleibt unsicher. Der Eintrag in der Prüf-Warteschlange zeigt, was davor gebucht wurde und dass die Ablage dazwischen NICHT frei war – ein Hinweis, genau hinzusehen.',
+    schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'dmmKlar', 'dmmKlar', 'dmFoil', 'dmFoil', 'dmFoil', 'dmFoil', 'dmFoil', 'dmFoil', 'leer', 'leer'] },
   { titel: 'Ausreißer und Flackern', text: 'Während A liegt, kommt ein einzelnes falsches Bild (B) und ein einzelnes leeres Bild (Schatten der Hand). Beides darf keinen neuen Scan auslösen.',
     schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'bewdKlar', 'dmKlar', 'leer', 'dmKlar', 'dmKlar'] },
   { titel: 'Foil – unsicher', text: 'Die Foil spiegelt, die Erkennung schwankt zwischen zwei Karten. Nach dem Zeitlimit landet der Scan in der Prüf-Warteschlange, die Karte muss dann raus. Danach in der Warteschlange den richtigen Kandidaten wählen.',
@@ -466,6 +475,7 @@ function render() {
   document.getElementById('pruef').innerHTML = mark('pruef', s.pruef.length ? s.pruef.map(p => `
     <div style="border-bottom:1px solid var(--line);padding:6px 0">
       <div><b>Scan ${p.scanId}</b>${p.proxy ? ' · Proxy' : ''} – ${esc(p.grund)}</div>
+      <div style="font-size:13px;color:var(--muted)">${esc(p.kontext)}</div>
       <div style="margin:4px 0">${p.kandidaten.map(x => `<button data-pruef="${p.id}" data-karte="${esc(x.karte)}">Ist ${esc(x.karte)} (${Math.round(x.konfidenz * 100)} %)</button>`).join('')}
       <button data-pruef="${p.id}" data-karte="">Verwerfen</button></div>
     </div>`).join('') : '<p class="empty">Leer.</p>');
