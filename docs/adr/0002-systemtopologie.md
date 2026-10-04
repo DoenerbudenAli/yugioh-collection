@@ -1,6 +1,6 @@
 # Systemtopologie
 
-Das System läuft als zwei Deployables im Heimnetz. Der **Hauptdienst** läuft auf dem Raspberry Pi und enthält Katalog (samt Bildern), Sammlung, Listen, Erfassung und UI. Er ist die einzige maßgebliche Datenhaltung. Der **Erkennungsdienst** läuft auf dem Heimrechner und enthält nur das Modul Erkennung mit GPU-Adapter und Index. Das Handy ist ein reiner Client ohne eigene Daten, eine Cloud gibt es nicht. Wir haben uns so entschieden, weil nur der Pi immer an ist, die Erkennung unter 1 s aber die GPU des Heimrechners braucht, und weil eine einzige Datenhaltung jede Sync-Logik erspart.
+Das System läuft als zwei Deployables im Heimnetz. Der **Hauptdienst** läuft auf dem Raspberry Pi und enthält Katalog (samt Bildern), Sammlung, Listen, Erfassung und UI. Er ist die einzige maßgebliche Datenhaltung. Der **Erkennungsdienst** läuft auf dem Heimrechner und enthält nur das Modul Erkennung mit GPU-Adapter und Index. Das Handy ist ein reiner Client ohne eigene Daten, eine Cloud gibt es nicht. Wir haben uns so entschieden, weil nur der Pi immer an ist, die Erkennung unter 500 ms aber die GPU des Heimrechners braucht, und weil eine einzige Datenhaltung jede Sync-Logik erspart.
 
 ## Regeln
 
@@ -18,7 +18,7 @@ Das System läuft als zwei Deployables im Heimnetz. Der **Hauptdienst** läuft a
 - **Sammlung auf dem Heimrechner:** Er ist nur an, wenn er gebraucht wird. Ohne ihn gäbe es keine Fehlkarten.
 - **Sammlung auf dem Handy mit Sync:** Das wäre ab dem ersten Tag ein Sync-Problem.
 - **Frames puffern, wenn der Heimrechner aus ist:** Ein Scan endet, wenn die Karte das Bild verlässt, und braucht dafür Live-Feedback. Gepufferte Frames wären eine zweite Prüf-Warteschlange.
-- **Erkennung und Erfassung auf dem Heimrechner, Pi nur Durchreiche:** Gemessen kostet der Pi ~1–2 % des Budgets von 1 s, eine Anfrage durch Caddy an einen Dienst auf dem Pi dauert über eine offene Verbindung ~10 ms. Dafür hätte es eine zweite Datenhaltung gebraucht (Prüf-Warteschlange nur bei laufendem Heimrechner), oder Remote-Adapter in beide Richtungen. Bleibt Rückfallweg, falls die Latenzgrenze gerissen wird.
+- **Erkennung und Erfassung auf dem Heimrechner, Pi nur Durchreiche:** Gemessen kostet der Pi ~2–4 % des Budgets von 500 ms, eine Anfrage durch Caddy an einen Dienst auf dem Pi dauert über eine offene Verbindung ~10 ms. Dafür hätte es eine zweite Datenhaltung gebraucht (Prüf-Warteschlange nur bei laufendem Heimrechner), oder Remote-Adapter in beide Richtungen. Bleibt Rückfallweg, falls die Latenzgrenze gerissen wird.
 - **Handy direkt zum Heimrechner:** Das hätte einen zweiten HTTPS-Einstiegspunkt mit eigenem Zertifikat unter Windows und CORS zwischen zwei Origins gebraucht.
 - **Tailscale-Namen (`*.ts.net`) oder eigene CA:** Die vorhandene Domain mit Caddy und Let's Encrypt löst HTTPS bereits, so wie bei den übrigen Diensten auf dem Pi.
 - **Cloud-Erkennung im MVP:** Sie ist nach der Research nicht nötig und bliebe als weiterer Adapter der Erkennung später ohne Topologie-Umbau möglich.
