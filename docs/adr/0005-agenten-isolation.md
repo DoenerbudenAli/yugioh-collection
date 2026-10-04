@@ -18,6 +18,7 @@ Jede Agenten-Session zu diesem Repo läuft in einem **Devcontainer unter Docker 
 - **Bedienung:** aus der Desktop-App über eine SSH-Umgebung (sshd im Container, nur `127.0.0.1`), als Rückfall die CLI per `docker exec`.
 - **Selbstschutz:** Image, Allowlist und Broker werden immer aus `origin/main` gebaut, nie aus dem Arbeitsstand eines Agenten. Diese Pfade sind Kern, eine Sandbox kann sich also nicht selbst lockern.
 - **Host:** Auf dem Host liegen keine GitHub-Credentials, weder ein `gh`-Login noch Einträge des Git Credential Managers. Der Owner reviewt, approvt, merged und ändert Einstellungen im Browser. Sein lokaler Clone holt anonym und ist nur zum Lesen da. Local-Sessions für andere Projekte bleiben erlaubt, weil dort nichts mehr zu holen ist.
+- **Eigene Änderungen des Owners:** Standard ist github.dev im Browser, Commit und PR laufen unter dem Owner. Für längere Arbeit lokal kommt ein SSH-Schlüssel `ed25519-sk` auf einem externen FIDO2-Key dazu, der bei jedem Push eine Berührung verlangt. Ein Agent kann so einen Push anstoßen, aber nicht ohne den Owner abschließen. Codespaces nur ohne Agenten darin, denn dort arbeitet jeder Agent mit dem Token des Owners.
 - **Kill-Switch:** Broker stoppen, App-Installation sperren, `setup-token` widerrufen.
 
 ## Restrisiken
@@ -36,4 +37,5 @@ Jede Agenten-Session zu diesem Repo läuft in einem **Devcontainer unter Docker 
 - **Token einmal pro Session:** Lange Sessions brächen nach 1 h ab. Eine regelmäßig erneuerte Token-Datei hängt an einem Timer, der still ausfallen kann.
 - **Key per DPAPI unter dem Owner-User:** DPAPI schützt nur gegen andere User. Jeder Local-Agent des Owners könnte ihn entschlüsseln.
 - **Docker-in-Docker:** braucht `--privileged`. Docker-Zugriff ist root-äquivalent und hebt die Grenze auf.
+- **Windows Hello als FIDO2-Authenticator für SSH:** Unter Windows 25H2 verlangt OpenSSH für Windows trotz Windows Hello einen externen Key (Win32-OpenSSH, Issues 2408 und 2413).
 - **Signierte Commits:** Die Signatur käme aus derselben Sandbox wie der Push und bewiese nichts zusätzlich.
