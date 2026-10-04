@@ -80,6 +80,7 @@
       <h2>Freies Spiel</h2>
       <div class="btnrow"><span>Kamerabild (je ein Bild)</span><div id="frameButtons"></div></div>
       <div class="btnrow"><span>Bedienung</span>
+        <button data-act="pause">1 s nichts im Bild</button>
         <button data-act="undo">Rückgängig</button>
         <button data-act="proxy">Proxy-Modus umschalten</button>
         <button data-act="markProxy">Letzten Scan als Proxy umschalten</button>
@@ -140,6 +141,7 @@ const ScanAblauf = (() => {
     leerBilderBisWeg: 2,     // so viele leere Bilder in Folge => Karte hat das Bild verlassen
     zeitlimitBilder: 8,      // nach so vielen Bildern ohne Entscheidung => Prüf-Warteschlange
     wechselBilder: 2,        // so viele sichere Bilder einer ANDEREN Karte => gilt als neue Karte, ohne leeres Bild
+    bremseBilder: 10,        // dieselbe Karte so kurz nach "weg" wieder sicher => Prüfung statt Buchung
     bildMs: 100,
   };
 
@@ -160,6 +162,7 @@ const ScanAblauf = (() => {
       laufend: null,          // { scanId, bilder: [] }
       wartetAuf: null,        // { scanId, karte } – Entscheidung gefallen, Karte liegt noch
       leerZaehler: 0,
+      zuletztWeg: null,       // { karte, bildNr } – welche gebuchte Karte zuletzt das Bild verlassen hat
       wechsel: { karte: null, zaehler: 0 },
       bildNr: 0,
       naechsteId: 1,
@@ -198,6 +201,10 @@ const ScanAblauf = (() => {
 
   function buchen(s, karte, grund) {
     const { scanId, bilder } = s.laufend;
+    const w = s.zuletztWeg;
+    if (w && w.karte === karte && s.bildNr - w.bildNr <= s.config.bremseBilder) {
+      return inPruefung(s, `gleiche Karte ${(s.bildNr - w.bildNr) * s.config.bildMs} ms nach Buchung – doppelt?`, true);
+    }
     const proxy = s.proxyModus;
     const exemplar = { id: s.naechsteId, karte, proxy, scanId };
     const dauerMs = bilder.length * s.config.bildMs;
@@ -211,7 +218,7 @@ const ScanAblauf = (() => {
     n.meldung = {
       art: 'buchung',
       text: `${karte}${proxy ? ' (Proxy)' : ''} gebucht – jetzt ${anzahl(n, karte)} Exemplar(e)`,
-      signal: `Kurzer hoher Ton · grüner Rahmen · Name + Anzahl groß · nach ${dauerMs} ms (${grund})`,
+      signal: `Kurzer hoher Ton · kurze Vibration · grüner Rahmen · Name + Anzahl groß · nach ${dauerMs} ms (${grund})`,
     };
     return mitLog(n, `Scan ${scanId}: ${karte} gebucht nach ${bilder.length} Bild(ern) – ${grund}.`);
   }
@@ -224,7 +231,7 @@ const ScanAblauf = (() => {
     // Kontext für die spätere Prüfung: was war der Scan davor, und war die Ablage dazwischen frei?
     const davor = [...s.scans].reverse().find(x => x.ergebnis !== 'rückgängig');
     const kontext = davor
-      ? `Davor: Scan ${davor.id} – ${davor.karte || 'unklar'} (${davor.ergebnis}); ${s.laufend.perWechsel ? 'OHNE freie Ablage dazwischen (Kartenwechsel)' : 'Ablage war dazwischen frei'}`
+      ? `Davor: Scan ${davor.id} – ${davor.karte || 'unklar'} (${davor.ergebnis}); ${s.laufend.perWechsel ? 'OHNE leeres Bild dazwischen (Kartenwechsel)' : 'Bild war dazwischen leer'}`
       : 'Erster Scan der Sitzung';
     let n = {
       ...s,
@@ -238,7 +245,7 @@ const ScanAblauf = (() => {
     n.meldung = {
       art: 'pruefung',
       text: `Unsicher – in die Prüf-Warteschlange (${grund})`,
-      signal: `Zwei tiefe Töne · gelber Rahmen · Karte zur Seite legen`,
+      signal: `Zwei tiefe Töne · doppelte Vibration · gelber Rahmen · Karte zur Seite legen`,
     };
     return mitLog(n, `Scan ${scanId}: in Prüf-Warteschlange – ${grund}. Kandidaten: ${kandidaten.map(k => k.karte).join(', ') || 'keine'}.`);
   }
@@ -300,7 +307,10 @@ const ScanAblauf = (() => {
       if (istLeer(b)) {
         const lz = s.leerZaehler + 1;
         if (lz < c.leerBilderBisWeg) return { ...s, leerZaehler: lz };
-        return mitLog({ ...s, phase: 'bereit', wartetAuf: null, leerZaehler: 0, wechsel: { karte: null, zaehler: 0 }, meldung: { art: 'neutral', text: 'Bereit – nächste Karte', signal: 'Rahmen wird grau' } }, 'Karte hat das Bild verlassen.');
+        const warGebucht = s.wartetAuf && s.scans.some(x => x.id === s.wartetAuf.scanId && x.ergebnis === 'gebucht');
+        const gleicheWieZuletzt = s.wartetAuf && s.zuletztWeg && s.zuletztWeg.karte === s.wartetAuf.karte;
+        const zuletztWeg = (warGebucht || gleicheWieZuletzt) ? { karte: s.wartetAuf.karte, bildNr: s.bildNr } : s.zuletztWeg;
+        return mitLog({ ...s, zuletztWeg, phase: 'bereit', wartetAuf: null, leerZaehler: 0, wechsel: { karte: null, zaehler: 0 }, meldung: { art: 'neutral', text: 'Bereit – nächste Karte', signal: 'Rahmen wird grau' } }, 'Karte hat das Bild verlassen.');
       }
       const t = top(b);
       const anders = istSicher(b, c) && t.karte !== (s.wartetAuf && s.wartetAuf.karte);
@@ -348,7 +358,7 @@ const ScanAblauf = (() => {
       let n = { ...s, erkennungDa: false, phase: 'gesperrt' };
       let text = 'Scannen gesperrt – Heimrechner nicht erreichbar';
       if (s.laufend) { text = `Scan ${s.laufend.scanId} abgebrochen – Heimrechner weg. Karte bitte neu scannen.`; n = mitLog({ ...n, laufend: null }, `Scan ${s.laufend.scanId} ohne Entscheidung abgebrochen (nichts gebucht).`); }
-      return mitLog({ ...n, meldung: { art: 'abbruch', text, signal: 'Fehlerton · Scan-Ansicht gesperrt, Prüf-Warteschlange bleibt nutzbar' } }, 'Erkennung nicht erreichbar.');
+      return mitLog({ ...n, meldung: { art: 'abbruch', text, signal: 'Fehlerton · lange Vibration · Scan-Ansicht gesperrt, Prüf-Warteschlange bleibt nutzbar' } }, 'Erkennung nicht erreichbar.');
     }
     const phase = s.wartetAuf ? 'wartetAufWeg' : 'bereit';
     return mitLog({ ...s, erkennungDa: true, phase, leerZaehler: 0, meldung: { art: 'neutral', text: s.wartetAuf ? 'Erkennung wieder da – erst die liegende Karte entfernen' : 'Erkennung wieder da – bereit', signal: '' } }, 'Erkennung wieder erreichbar.');
@@ -370,6 +380,7 @@ const ScanAblauf = (() => {
   function reduziere(s, a) {
     switch (a.typ) {
       case 'bild': return bild(s, a.bild);
+      case 'pause': { for (let i = 0; i < 10; i++) s = bild(s, { leer: true }); return s; }
       case 'rueckgaengig': return rueckgaengig(s);
       case 'proxyModus': return proxyUmschalten(s);
       case 'letztenAlsProxy': return letztenAlsProxy(s);
@@ -396,22 +407,24 @@ const BILDER = {
   bewdKlar:  { titel: 'Blauäugiger w. Drache – klar', bild: { kandidaten: [k('Blauäugiger w. Drache', 0.95), k('Blauäugiger Alt. w. Drache', 0.72)], passcode: null } },
   ashKnapp:  { titel: 'Aschblüte (deutsch) – knapp', bild: { kandidaten: [k('Aschblüte & Freudiger Frühling', 0.79), k('Ghost Ogre & Schneehase', 0.74)], passcode: null } },
   unscharf:  { titel: 'Bewegungsunschärfe', bild: { unscharf: true, kandidaten: [] } },
-  leer:      { titel: 'Leeres Bild', bild: { leer: true } },
+  leer:      { titel: 'Leeres Bild (scharf, keine Karte)', bild: { leer: true } },
 };
 
 const SZENARIEN = [
-  { titel: 'Glatter Fall', text: 'Karte rein, drei klare Bilder, gebucht. Karte raus, dieselbe Karte nochmal rein: zweites Exemplar. Achte darauf, dass zwischen den beiden Buchungen zwei leere Bilder nötig sind.',
-    schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'leer', 'leer', 'dmKlar', 'dmKlar', 'dmKlar', 'leer', 'leer'] },
+  { titel: 'Glatter Fall', text: 'Karte rein, drei klare Bilder, gebucht. Karte raus (zwei leere Bilder genügen für „weg“), nächstes Exemplar derselben Karte holen, rein: zweites Exemplar.',
+    schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'leer', 'leer', '#pause', 'dmKlar', 'dmKlar', 'dmKlar', 'leer', 'leer'] },
   { titel: 'Karte bleibt liegen', text: 'Nach der Buchung bleibt die Karte einfach im Bild. Es darf kein zweites Exemplar entstehen, egal wie viele Bilder kommen.',
     schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'dmKlar', 'dmKlar', 'dmKlar', 'dmKlar', 'dmKlar'] },
   { titel: 'Passcode-Abkürzung', text: 'Ein gelesener Passcode, der zur besten Karte passt, bucht schon nach dem ersten Bild. Das ist der schnellste Weg unter 500 ms.',
     schritte: ['dmPass', 'dmPass', 'leer', 'leer'] },
   { titel: 'Kartenwechsel ohne Lücke', text: 'Karte A wird gebucht, dann wird B direkt darübergelegt, ohne dass das Bild je leer ist. Zwei sichere Bilder von B gelten als Kartenwechsel.',
     schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'bewdKlar', 'bewdKlar', 'bewdKlar', 'bewdKlar', 'leer', 'leer'] },
-  { titel: 'Verdeckt, wieder gezeigt', text: 'Dunkler Magier wird gebucht. Dann verdeckt ihn die Hand (unscharfe Bilder), danach ist er wieder klar zu sehen. Weil die Ablage nie frei war, entsteht kein neuer Scan – weder Buchung noch Prüf-Warteschlange. Erst wenn die Ablage wirklich frei war, zählt er erneut.',
-    schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'unscharf', 'unscharf', 'unscharf', 'dmKlar', 'dmFoil', 'dmKlar', 'dmKlar', 'leer', 'leer', 'dmKlar', 'dmKlar', 'dmKlar'] },
-  { titel: 'Prüfung mit Kontext', text: 'Dunkler Magier wird gebucht, dann wird die Foil-Variante direkt darübergeschoben und bleibt unsicher. Der Eintrag in der Prüf-Warteschlange zeigt, was davor gebucht wurde und dass die Ablage dazwischen NICHT frei war – ein Hinweis, genau hinzusehen.',
+  { titel: 'Verdeckt, wieder gezeigt', text: 'Dunkler Magier wird gebucht. Dann verdeckt ihn die Hand (unscharfe Bilder), danach ist er wieder klar zu sehen. Weil das Bild nie leer war, entsteht kein neuer Scan – weder Buchung noch Prüf-Warteschlange. Erst wenn das Bild wirklich leer war (und die Doppel-Bremse abgelaufen ist), zählt er erneut.',
+    schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'unscharf', 'unscharf', 'unscharf', 'dmKlar', 'dmFoil', 'dmKlar', 'dmKlar', 'leer', 'leer', '#pause', 'dmKlar', 'dmKlar', 'dmKlar'] },
+  { titel: 'Prüfung mit Kontext', text: 'Dunkler Magier wird gebucht, dann wird die Foil-Variante direkt darübergeschoben und bleibt unsicher. Der Eintrag in der Prüf-Warteschlange zeigt, was davor gebucht wurde und dass das Bild dazwischen NIE leer war – ein Hinweis, genau hinzusehen.',
     schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'dmmKlar', 'dmmKlar', 'dmFoil', 'dmFoil', 'dmFoil', 'dmFoil', 'dmFoil', 'dmFoil', 'leer', 'leer'] },
+  { titel: 'Freihand: kurz rausgewackelt', text: 'Freihändig rutscht die gebuchte Karte kurz ganz aus dem Bild (scharfer Hintergrund) und ist gleich wieder da. Die Doppel-Bremse bucht sie nicht erneut, sondern schickt sie mit Hinweis in die Prüf-Warteschlange. Später, nach mehr als 1 s, wird dieselbe Karte normal gebucht.',
+    schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'leer', 'leer', 'leer', 'dmKlar', 'dmKlar', 'dmKlar', 'leer', 'leer', 'leer', '#pause', 'dmKlar', 'dmKlar', 'dmKlar'] },
   { titel: 'Ausreißer und Flackern', text: 'Während A liegt, kommt ein einzelnes falsches Bild (B) und ein einzelnes leeres Bild (Schatten der Hand). Beides darf keinen neuen Scan auslösen.',
     schritte: ['dmKlar', 'dmKlar', 'dmKlar', 'bewdKlar', 'dmKlar', 'leer', 'dmKlar', 'dmKlar'] },
   { titel: 'Foil – unsicher', text: 'Die Foil spiegelt, die Erkennung schwankt zwischen zwei Karten. Nach dem Zeitlimit landet der Scan in der Prüf-Warteschlange, die Karte muss dann raus. Danach in der Warteschlange den richtigen Kandidaten wählen.',
@@ -429,6 +442,7 @@ const SZENARIEN = [
 const AKTIONEN = {
   '#rueckgaengig': { titel: 'Rückgängig', aktion: { typ: 'rueckgaengig' } },
   '#proxyModus': { titel: 'Proxy-Modus umschalten', aktion: { typ: 'proxyModus' } },
+  '#pause': { titel: '⏸ 1 s nichts im Bild (nächste Karte holen)', aktion: { typ: 'pause' } },
   '#offline': { titel: 'Erkennung fällt aus', aktion: { typ: 'erkennung', da: false } },
   '#online': { titel: 'Erkennung wieder da', aktion: { typ: 'erkennung', da: true } },
 };
@@ -501,7 +515,7 @@ function starteSzenario(i) { aktivSzenario = i; schrittIndex = 0; vorher = null;
 function renderConfig() {
   const felder = [
     ['konsensBilder', 'Sichere Bilder in Folge zum Buchen'], ['sicherAb', 'Sicher ab Konfidenz'], ['mindestAbstand', 'Mindestabstand zur 2. Karte'],
-    ['leerBilderBisWeg', 'Leere Bilder bis „Karte weg“'], ['zeitlimitBilder', 'Zeitlimit in Bildern'], ['wechselBilder', 'Bilder für Kartenwechsel'],
+    ['leerBilderBisWeg', 'Leere Bilder bis „Karte weg“'], ['bremseBilder', 'Doppel-Bremse in Bildern'], ['zeitlimitBilder', 'Zeitlimit in Bildern'], ['wechselBilder', 'Bilder für Kartenwechsel'],
   ];
   document.getElementById('config').innerHTML = felder.map(([key, label]) =>
     `<label class="cfg">${label} <input type="number" step="${config[key] < 1 ? 0.01 : 1}" data-cfg="${key}" value="${config[key]}"></label>`).join('') +
@@ -513,6 +527,7 @@ document.getElementById('frameButtons').innerHTML = Object.entries(BILDER).map((
 document.addEventListener('click', (e) => {
   const t = e.target.closest('button'); if (!t) return;
   if (t.dataset.frame) tu({ typ: 'bild', bild: BILDER[t.dataset.frame].bild });
+  else if (t.dataset.act === 'pause') tu({ typ: 'pause' });
   else if (t.dataset.act === 'undo') tu({ typ: 'rueckgaengig' });
   else if (t.dataset.act === 'proxy') tu({ typ: 'proxyModus' });
   else if (t.dataset.act === 'markProxy') tu({ typ: 'letztenAlsProxy' });
