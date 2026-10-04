@@ -34,15 +34,23 @@ _Avoid_: Bestand, Inventar
 ### Erfassung
 
 **Scan**:
-Die Erfassung genau eines Exemplars; dieselbe Karte zählt erst erneut, nachdem sie das Kamerabild verlassen hat.
+Die Erfassung genau eines Exemplars; endet mit einer Buchung oder einem Eintrag in der Prüf-Warteschlange. Dieselbe Karte zählt erst erneut, nachdem sie das Kamerabild verlassen hat – verdeckt oder verwackelt gilt nicht als verlassen.
 _Avoid_: Foto, Aufnahme
+
+**Buchung**:
+Der Abschluss eines Scans, der ein Exemplar in der Sammlung anlegt; nur eine Buchung erzeugt ein Exemplar.
+_Avoid_: Speichern, Hinzufügen
+
+**Scan-Sitzung**:
+Die Zeit vom Öffnen bis zum Schließen der Scan-Ansicht; Rückgängig wirkt nur innerhalb einer Scan-Sitzung.
+_Avoid_: Session, Scan-Vorgang
 
 **Erkennung**:
 Die Zuordnung von Kamerabildern zu Kandidaten-Karten mit je einer Konfidenz; sie entscheidet nicht, ob gebucht wird.
 _Avoid_: Identifikation, Scan (ein Scan nutzt eine Erkennung)
 
 **Prüf-Warteschlange**:
-Scans, deren Erkennung nicht sicher genug war und die nachträglich bestätigt oder korrigiert werden.
+Scans, deren Erkennung nicht sicher genug war und die nachträglich bestätigt, korrigiert oder verworfen werden; ihre Einträge sind keine Exemplare.
 _Avoid_: Inbox, Fehlerliste
 
 ### Listen
