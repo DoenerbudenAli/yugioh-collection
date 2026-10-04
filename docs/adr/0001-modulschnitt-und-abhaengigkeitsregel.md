@@ -9,7 +9,7 @@ Erfassung ──► Katalog
 Listen    ──► Katalog
 ```
 
-Der Katalog hängt von nichts ab. Jede andere Kante ist verboten, insbesondere Listen ↔ Sammlung. Innerhalb eines Moduls gibt es zwei Schichten. Der **Kern** ist rein, ohne I/O, und darf nur den Kern erlaubter Module importieren. Die **Adapter** (Speicher, HTTP, Dateien, Kamera) importieren nur den eigenen Kern. Darüber liegt eine einzige **Komposition**, die Adapter verdrahtet und technischen Querschnitt (Logging, Konfiguration, Uhr) als Providers hineingibt. Ganz oben liegt die UI, die nur die Komposition kennt. Wir haben uns so entschieden, weil die Regel mechanisch erzwingbar sein soll und Agenten ohne erzwungene Grenzen messbar Komplexität aufbauen.
+Der Katalog hängt von nichts ab. Jede andere Kante ist verboten, insbesondere Listen ↔ Sammlung. Innerhalb eines Moduls gibt es zwei Schichten. Der **Kern** ist rein, ohne I/O, und darf nur den Kern erlaubter Module importieren. Die **Adapter** (Speicher, HTTP, Dateien, Kamera) importieren nur den eigenen Kern. Darüber liegt eine einzige **Komposition** (je Deployable, siehe ADR 0002), die Adapter verdrahtet und technischen Querschnitt (Logging, Konfiguration, Uhr) als Providers hineingibt. Ganz oben liegt die UI, die nur die Komposition kennt. Wir haben uns so entschieden, weil die Regel mechanisch erzwingbar sein soll und Agenten ohne erzwungene Grenzen messbar Komplexität aufbauen.
 
 ## Regeln
 
