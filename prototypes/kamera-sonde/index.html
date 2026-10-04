@@ -44,7 +44,9 @@
   <span><b>Karte</b> <span id="sKarte">–</span></span>
   <span><b>Schärfe</b> <span id="sScharf">–</span></span>
   <span><b>Aufnahme</b> <span id="sRec">aus</span></span>
+  <span id="sFehler" class="bad"></span>
 </div>
+<div id="hinweis" class="mut" style="padding:0 10px 4px; font-size:11px"></div>
 <div id="buehne"><video id="video" playsinline muted></video><canvas id="overlay"></canvas></div>
 </div>
 <main>
@@ -166,6 +168,9 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const TESTBILD = new URLSearchParams(location.search).has("testbild");
+if (new URLSearchParams(location.search).has("wie-firefox")) { delete window.MediaStreamTrackProcessor; delete window.ImageCapture; Navigator.prototype.vibrate = undefined; }
+const KANN = { mstp: "MediaStreamTrackProcessor" in window, imageCapture: "ImageCapture" in window, vibrate: typeof navigator.vibrate === "function" };
+let quelle = KANN.mstp ? "mstp" : "rvfc";
 const KARTE_SEITEN = 59 / 86;  // Breite/Höhe einer Karte
 const PASSCODE_MIN_PX = 1070;
 
@@ -177,7 +182,7 @@ function merke() { try { localStorage.setItem("sonde-erg", JSON.stringify(erg));
 function zeigeZaehler() {
   $("hochTxt").textContent = Object.entries(erg).filter(([, v]) => Array.isArray(v)).map(([k, v]) => `${k}: ${v.length}`).join("  ");
 }
-function fehler(wo, e) { const t = `${new Date().toISOString()} ${wo}: ${e && e.message || e}`; console.error(t); erg.fehler.push(t); merke(); }
+function fehler(wo, e) { const t = `${new Date().toISOString()} ${wo}: ${e && e.message || e}`; console.error(t); erg.fehler.push(t); merke(); $("sFehler").textContent = `Fehler: ${wo}: ${e && e.message || e}`; }
 window.addEventListener("error", (e) => fehler("window", e.message));
 window.addEventListener("unhandledrejection", (e) => fehler("promise", e.reason));
 
@@ -299,7 +304,7 @@ let messung = null, aufnahmeAn = false, letzteSchaerfe = 0, scharfWert = NaN;
 let frameZaehler = 0, sichtbarSeit = null, settingsVorVerbergen = null;
 
 async function leseSchleife() {
-  if (!("MediaStreamTrackProcessor" in window)) { fehler("Pipeline", "MediaStreamTrackProcessor fehlt – Rückfall requestVideoFrameCallback"); return rvfcSchleife(); }
+  if (!KANN.mstp) return rvfcSchleife();
   const proc = new MediaStreamTrackProcessor({ track, maxBufferSize: 1 });
   reader = proc.readable.getReader();
   while (laeuft && reader) {
@@ -310,12 +315,15 @@ async function leseSchleife() {
   }
 }
 
+let kette = 0;
 async function rvfcSchleife() {
-  const v = $("video");
+  const v = $("video"), meine = ++kette;
   const schritt = async (jetzt, meta) => {
-    if (!laeuft) return;
+    if (!laeuft || meine !== kette) return;
     try {
-      const frame = new VideoFrame(v, { timestamp: Math.round(meta.captureTime ? meta.captureTime * 1000 : jetzt * 1000) });
+      // Ohne captureTime (Firefox) ist der Zeitstempel die Anzeigezeit, nicht die Aufnahmezeit.
+      quelle = meta.captureTime ? "rvfc+captureTime" : "rvfc";
+      const frame = new VideoFrame(v, { timestamp: Math.round((meta.captureTime || jetzt) * 1000) });
       verarbeite(frame, performance.now());
     } catch (e) { fehler("rvfc", e); }
     v.requestVideoFrameCallback(schritt);
@@ -387,7 +395,7 @@ async function kodiere(frame, tAbhol, tAufnahme) {
   if (!wsOffen) { unterwegs--; return; }
   const s = ++seq;
   const kopf = {
-    seq: s, t_abholung_ms: tAbhol, ts_frame_us: tsFrame ?? null, t_aufnahme_ms: tAufnahme, strom: [frameB, frameH],
+    seq: s, quelle, t_abholung_ms: tAbhol, ts_frame_us: tsFrame ?? null, t_aufnahme_ms: tAufnahme, strom: [frameB, frameH],
     zuschnitt: [r.sx, r.sy, r.sw, r.sh], bild: [job.ow, job.oh], qualitaet: job.quality, thread: $("thread").value,
     zeichnen_ms: zeichnenMs, kodieren_ms: kodierenMs, bytes: buf.byteLength, kamera: aktuelleSettings, schaerfe: scharfWert,
   };
@@ -498,6 +506,12 @@ async function fpsMessen() {
 function steuerungEinrichten() {
   if (!track || !track.getCapabilities) return;
   const c = track.getCapabilities(), s = track.getSettings();
+  const fehlt = [];
+  const zeige = (id, da, name) => { if (da) return; fehlt.push(name); const el = $(id); (el.type === "range" ? el.closest(".zeile") : el.closest("label") || el).style.display = "none"; };
+  zeige("fokusModus", c.focusMode, "Fokus-Modus"); zeige("fokusAbst", c.focusDistance, "Fokusabstand"); zeige("belKorr", c.exposureCompensation, "Belichtung");
+  zeige("torch", c.torch, "Torch"); zeige("bPoi", c.pointsOfInterest, "Messpunkt"); zeige("bFoto", KANN.imageCapture, "takePhoto");
+  if (!KANN.vibrate) fehlt.push("Vibration");
+  $("hinweis").textContent = fehlt.length ? `Kann dieser Browser nicht (ausgeblendet): ${fehlt.join(", ")}. Bildquelle: ${quelle}.` : `Bildquelle: ${quelle}.`;
   if (c.focusDistance) { Object.assign($("fokusAbst"), { min: c.focusDistance.min, max: c.focusDistance.max, step: c.focusDistance.step || 0.005, value: s.focusDistance ?? c.focusDistance.min }); }
   else $("fokusAbst").disabled = true;
   if (c.exposureCompensation) { Object.assign($("belKorr"), { min: c.exposureCompensation.min, max: c.exposureCompensation.max, step: c.exposureCompensation.step || 0.1, value: s.exposureCompensation ?? 0 }); }
@@ -518,14 +532,25 @@ async function setze(constraints, still = false) {
 
 async function standbild() {
   if (!track) return;
-  const kopie = track.clone();
-  const rd = new MediaStreamTrackProcessor({ track: kopie, maxBufferSize: 1 }).readable.getReader();
-  const { value: frame } = await rd.read(); rd.cancel(); kopie.stop();
-  const c = new OffscreenCanvas(frame.displayWidth, frame.displayHeight);
-  c.getContext("2d").drawImage(frame, 0, 0); frame.close();
+  let c;
+  try {
+    if (KANN.mstp) {
+      const kopie = track.clone();
+      const rd = new MediaStreamTrackProcessor({ track: kopie, maxBufferSize: 1 }).readable.getReader();
+      const { value: frame } = await rd.read(); rd.cancel(); kopie.stop();
+      c = new OffscreenCanvas(frame.displayWidth, frame.displayHeight);
+      c.getContext("2d").drawImage(frame, 0, 0); frame.close();
+    } else {
+      const v = $("video");
+      c = new OffscreenCanvas(v.videoWidth, v.videoHeight);
+      c.getContext("2d").drawImage(v, 0, 0);
+    }
+  } catch (e) { fehler("Standbild", e); return; }
   const blob = await c.convertToBlob({ type: "image/jpeg", quality: 0.95 });
   const meta = { name: $("bildName").value || "standbild", art: "strom", groesse: [c.width, c.height], kartenrahmenPx: rahmenHoehe(), rahmenProzent: Number($("rahmen").value), abstandCm: Number($("abstandCm").value), schaerfe: scharfWert, kamera: track.getSettings() };
-  const r = await (await fetch("standbild", { method: "POST", body: blob, headers: { "content-type": "image/jpeg", "x-meta": JSON.stringify(meta) } })).json();
+  let r;
+  try { r = await (await fetch("standbild", { method: "POST", body: blob, headers: { "content-type": "image/jpeg", "x-meta": JSON.stringify(meta) } })).json(); }
+  catch (e) { fehler("Standbild hochladen", e); return; }
   erg.standbilder.push({ ...meta, ...r }); merke();
   $("steuerTxt").textContent = `Standbild: ${r.gespeichert} (${f0(blob.size / 1024)} kB)`;
 }
@@ -555,7 +580,7 @@ async function nahfokusPunkt() {
 
 // ---------- T4 ----------
 function pipelineEinstellungen() {
-  return { strom: [frameB, frameH], gefragt: $("aufl").value, qualitaet: Number($("qual").value), zuschnitt: $("zuschnitt").value, rahmenProzent: Number($("rahmen").value), kartenrahmenPx: rahmenHoehe(), maxH: Number($("maxH").value), thread: $("thread").value, unterwegs: Number($("unterwegs").value), rate: Number($("rate").value) };
+  return { quelle, strom: [frameB, frameH], gefragt: $("aufl").value, qualitaet: Number($("qual").value), zuschnitt: $("zuschnitt").value, rahmenProzent: Number($("rahmen").value), kartenrahmenPx: rahmenHoehe(), maxH: Number($("maxH").value), thread: $("thread").value, unterwegs: Number($("unterwegs").value), rate: Number($("rate").value) };
 }
 async function messe20() {
   if (!senden) { $("pipeTxt").textContent = "erst Senden einschalten"; return; }
@@ -613,7 +638,7 @@ function vergleicheNachRueckkehr() {
 const MUSTER = { kurz: { vib: [60], toene: [[880, 0, 0.08]] }, doppelt: { vib: [60, 80, 60], toene: [[660, 0, 0.07], [660, 0.14, 0.07]] }, lang: { vib: [400], toene: [[330, 0, 0.4]] } };
 function feedback(art) {
   const m = MUSTER[art], t = performance.now(), e = { zeit: new Date().toISOString(), art };
-  if ($("fbVib").checked) e.vibrate = "vibrate" in navigator ? navigator.vibrate(m.vib) : "fehlt";
+  if ($("fbVib").checked) e.vibrate = KANN.vibrate ? navigator.vibrate(m.vib) : "fehlt";
   if ($("fbTon").checked && audio) {
     audioAn();
     const t0 = audio.currentTime + 0.005;
