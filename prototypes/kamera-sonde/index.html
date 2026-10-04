@@ -126,7 +126,7 @@
 </details>
 
 <details>
-  <summary>Aufnahme (Eval-Set)</summary>
+  <summary id="aufnahmeKopf">Aufnahme (Eval-Set)</summary>
   <div class="mut">Nimmt mit genau den Einstellungen aus T4 auf (Auflösung, Zuschnitt, Qualität, Rate). Jedes Bild wird mit Zeitstempel und Kamera-Metadaten auf dem Pi abgelegt.</div>
   <div class="zeile"><input type="text" id="clipName" placeholder="Name, z. B. probe-halterung" size="24"><button id="bRec">Aufnahme starten</button></div>
   <pre id="recTxt"></pre>
@@ -169,6 +169,9 @@
 const $ = (id) => document.getElementById(id);
 const TESTBILD = new URLSearchParams(location.search).has("testbild");
 if (new URLSearchParams(location.search).has("wie-firefox")) { delete window.MediaStreamTrackProcessor; delete window.ImageCapture; Navigator.prototype.vibrate = undefined; }
+// ?eval: feste Aufnahme-Einstellungen fürs Eval-Set (Issue #52/#47), Aufnahme-Block nach oben.
+const EVAL = new URLSearchParams(location.search).has("eval");
+const EVAL_WERTE = { aufl: "1920x1080", fpsWunsch: "30", resize: "none", rahmen: "61", qual: "0.85", zuschnitt: "rahmen", maxH: "0", thread: "worker", unterwegs: "2", rate: "0" };
 const KANN = { mstp: "MediaStreamTrackProcessor" in window, imageCapture: "ImageCapture" in window, vibrate: typeof navigator.vibrate === "function" };
 let quelle = KANN.mstp ? "mstp" : "rvfc";
 const KARTE_SEITEN = 59 / 86;  // Breite/Höhe einer Karte
@@ -600,6 +603,11 @@ async function messe20() {
 function aufnahme() {
   if (!wsOffen) return;
   if (!aufnahmeAn) {
+    if (EVAL) {
+      const falsch = Object.entries(EVAL_WERTE).filter(([id, v]) => $(id).value !== v).map(([id]) => id);
+      if (frameH !== 1920) falsch.push(`Strom ${frameB}×${frameH} statt 1080×1920`);
+      if (falsch.length) { $("recTxt").textContent = "NICHT gestartet – abweichend: " + falsch.join(", ") + ". Seite neu laden, Kamera starten."; return; }
+    }
     if (!senden) schalteSenden(true);
     ws.send(JSON.stringify({ typ: "aufnahme_start", name: $("clipName").value || "clip", einstellungen: { ...pipelineEinstellungen(), kamera: aktuelleSettings, ua: navigator.userAgent } }));
     aufnahmeAn = true; $("bRec").textContent = "Aufnahme stoppen"; $("bRec").classList.add("an");
@@ -708,6 +716,12 @@ $("bDauer").onclick = dauerlast;
 $("bHoch").onclick = hochladen;
 $("bLeeren").onclick = () => { if (confirm("Alle gemerkten Ergebnisse leeren?")) { erg = LEER(); merke(); } };
 for (const id of ["qual", "zuschnitt", "maxH", "thread", "unterwegs", "rate", "rahmen"]) $(id).addEventListener("change", () => { st.rtt.leer(); st.kodieren.leer(); st.zeichnen.leer(); st.bytes.leer(); st.abholBisGesendet.leer(); st.aufnahmeBisGesendet.leer(); st.aufnahmeBisEcho.leer(); });
+if (EVAL) {
+  for (const [id, v] of Object.entries(EVAL_WERTE)) $(id).value = v;
+  const block = $("aufnahmeKopf").parentElement;
+  block.open = true; document.querySelector("main").prepend(block);
+  $("aufnahmeKopf").textContent = "Aufnahme (Eval-Set) – feste Einstellungen";
+}
 zeigeZaehler();
 $("lebenTxt").textContent = erg.lebenszyklus.slice(-40).join("\n");
 </script>
