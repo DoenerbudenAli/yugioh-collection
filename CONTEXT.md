@@ -14,6 +14,10 @@ _Avoid_: Card, Druck, Print (der Wayfinder-Plan heißt **Map**, nie „Karte“)
 Die Menge aller existierenden Karten, gegen die erkannt und abgeglichen wird.
 _Avoid_: Kartendatenbank
 
+**Passcode**:
+Die auf einer Karte gedruckte 8-stellige Nummer; eine Karte kann mehrere Passcodes haben (Alt-Arts), manche haben keinen.
+_Avoid_: ID, Kartennummer
+
 ### Sammlung
 
 **Exemplar**:
@@ -32,6 +36,10 @@ _Avoid_: Bestand, Inventar
 **Scan**:
 Die Erfassung genau eines Exemplars; dieselbe Karte zählt erst erneut, nachdem sie das Kamerabild verlassen hat.
 _Avoid_: Foto, Aufnahme
+
+**Erkennung**:
+Die Zuordnung von Kamerabildern zu Kandidaten-Karten mit je einer Konfidenz; sie entscheidet nicht, ob gebucht wird.
+_Avoid_: Identifikation, Scan (ein Scan nutzt eine Erkennung)
 
 **Prüf-Warteschlange**:
 Scans, deren Erkennung nicht sicher genug war und die nachträglich bestätigt oder korrigiert werden.
