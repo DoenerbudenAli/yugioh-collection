@@ -15,8 +15,10 @@ import hashlib
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
+import threading
 import urllib.request
 from collections import Counter, defaultdict
 from http import HTTPStatus
@@ -355,5 +357,11 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     KATALOG.laden()
-    print(f"Eval-Daten: {DATEN}\nKatalog: {len(KATALOG.karten)} Karten\nhttp://127.0.0.1:{PORT}", flush=True)
+    print(f"Eval-Daten: {DATEN}\nKatalog: {len(KATALOG.karten)} Karten\nhttp://localhost:{PORT}", flush=True)
+
+    class ServerV6(ThreadingHTTPServer):
+        address_family = socket.AF_INET6
+
+    # „localhost“ löst zuerst nach ::1 auf; ohne IPv6-Listener kostet jede Anfrage 200 ms Rückfall.
+    threading.Thread(target=ServerV6(("::1", PORT), Handler).serve_forever, daemon=True).start()
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

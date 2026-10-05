@@ -204,7 +204,7 @@ function zeigeKarten() {
 }
 
 // ================= 2 · Labeln =================
-let aufnahme = null, lab = null, pos = 0, diffs = null, labTimer = null;
+let aufnahme = null, lab = null, pos = 0, diffs = null, leer = null, labTimer = null;
 async function ladeAufnahmen() {
   status("lade Aufnahmen …");
   const a = await api("/api/aufnahmen"); stapelAlle = await api("/api/stapel");
@@ -223,9 +223,10 @@ async function oeffneAufnahme(ordner) {
   status("lade " + ordner + " …");
   aufnahme = await api("/api/aufnahme/" + ordner); pos = 0;
   lab = aufnahme.labels || vorschlagKopf(ordner);
-  diffs = lab.analyse?.diffs?.length === aufnahme.frames.length ? lab.analyse.diffs : null;
+  const ok = lab.analyse?.v === 2 && lab.analyse.diffs.length === aufnahme.frames.length;
+  diffs = ok ? lab.analyse.diffs : null; leer = ok ? lab.analyse.leer : null;
   zeigeLabelEditor(); ladeAufnahmen();
-  if (!diffs) { diffs = await berechneDiffs(); lab.analyse = { diffs }; }
+  if (!diffs) { ({ diffs, leer } = await berechneDiffs()); lab.analyse = { v: 2, diffs, leer }; }
   if (!lab.clips.length) schlageClipsVor();
   speichereLabels(); zeichne();
 }
@@ -243,26 +244,30 @@ const bildUrl = (i) => `/aufnahmen/${aufnahme.ordner}/${aufnahme.frames[i].datei
 
 async function berechneDiffs() {
   // Mittlere Grauwert-Differenz zum Vorgänger auf 16×24 Pixeln – Maß für Bewegung („liegt ruhig“).
+  // Jedes Bild ohne seinen Mittelwert, damit Belichtungsdrift nicht als Bewegung oder Karte zählt.
   const c = document.createElement("canvas"); c.width = 16; c.height = 24; const g = c.getContext("2d", { willReadFrequently: true });
   const n = aufnahme.frames.length, grau = new Array(n); let fertig = 0;
-  const lade = (i) => new Promise((ok) => { const im = new Image(); im.onload = () => { g.drawImage(im, 0, 0, 16, 24); const d = g.getImageData(0, 0, 16, 24).data; const a = new Float32Array(384); for (let p = 0; p < 384; p++) a[p] = (d[4 * p] + d[4 * p + 1] + d[4 * p + 2]) / 3; grau[i] = a; ok(); }; im.onerror = () => { grau[i] = null; ok(); }; im.src = bildUrl(i); });
+  const lade = (i) => new Promise((ok) => { const im = new Image(); im.onload = () => { g.drawImage(im, 0, 0, 16, 24); const d = g.getImageData(0, 0, 16, 24).data; const a = new Float32Array(384); let m = 0; for (let p = 0; p < 384; p++) { a[p] = (d[4 * p] + d[4 * p + 1] + d[4 * p + 2]) / 3; m += a[p]; } m /= 384; for (let p = 0; p < 384; p++) a[p] -= m; grau[i] = a; ok(); }; im.onerror = () => { grau[i] = null; ok(); }; im.src = bildUrl(i); });
   let naechst = 0;
-  await Promise.all(Array.from({ length: 8 }, async () => { while (naechst < n) { const i = naechst++; await lade(i); if (++fertig % 50 === 0) status(`analysiere Bewegung ${fertig}/${n} …`); } }));
-  return grau.map((a, i) => { const b = grau[i - 1]; if (!a || !b) return 0; let s = 0; for (let p = 0; p < 384; p++) s += Math.abs(a[p] - b[p]); return +(s / 384).toFixed(2); });
-}
-function otsu(werte) {
-  const s = [...werte].sort((a, b) => a - b); let best = s[0], bestV = -1;
-  for (let k = 1; k < s.length; k++) { const a = s.slice(0, k), b = s.slice(k); const ma = a.reduce((x, y) => x + y, 0) / a.length, mb = b.reduce((x, y) => x + y, 0) / b.length; const v = a.length * b.length * (ma - mb) ** 2; if (v > bestV) { bestV = v; best = (s[k - 1] + s[k]) / 2; } }
-  return best;
+  await Promise.all(Array.from({ length: 16 }, async () => { while (naechst < n) { const i = naechst++; await lade(i); if (++fertig % 50 === 0) status(`analysiere Bewegung ${fertig}/${n} …`); } }));
+  const abstand = (a, b) => { if (!a || !b) return 0; let s = 0; for (let p = 0; p < 384; p++) s += Math.abs(a[p] - b[p]); return +(s / 384).toFixed(2); };
+  const d = grau.map((a, i) => abstand(a, grau[i - 1]));
+  // Leerer Hintergrund = Median der ruhigen, unscharfen Bilder. Bewegte Karten sind auch unscharf, aber nicht ruhig.
+  const kandidaten = grau.map((a, i) => i).filter((i) => grau[i] && d[i] < 2).sort((x, y) => (aufnahme.frames[x].schaerfe ?? 0) - (aufnahme.frames[y].schaerfe ?? 0)).slice(0, 30);
+  const ref = new Float32Array(384);
+  for (let p = 0; p < 384; p++) { const w = kandidaten.map((i) => grau[i][p]).sort((x, y) => x - y); ref[p] = w[Math.floor(w.length / 2)] ?? 0; }
+  return { diffs: d, leer: grau.map((a) => abstand(a, ref)) };
 }
 function schlageClipsVor() {
   const f = aufnahme.frames, n = f.length;
-  const logS = f.map((x) => Math.log((x.schaerfe ?? 1) + 1));
-  const schwelle = otsu(logS.filter((_, i) => i % Math.max(1, Math.floor(n / 400)) === 0));
-  let belegt = logS.map((v) => v > schwelle);
+  // Belegt = Bild weicht vom leeren Hintergrund ab (Schärfe allein trennt nicht: wegbewegte Karten sind unscharf).
+  // Schwelle = 4 × Rauschen der leeren Bilder (20-%-Quantil), mindestens 10 – auch ein Kartenrand im Bild zählt als belegt.
+  // Ein Clip braucht irgendwo eine volle Karte (> 20); Handschatten bleiben darunter.
+  const schwelle = Math.max(10, 4 * [...leer].sort((x, y) => x - y)[Math.floor(n * 0.2)]);
+  let belegt = leer.map((v) => v > schwelle);
   const laeufe = (arr) => { const r = []; let a = null; arr.forEach((b, i) => { if (b && a === null) a = i; if (!b && a !== null) { r.push([a, i - 1]); a = null; } }); if (a !== null) r.push([a, arr.length - 1]); return r; };
   for (const [a, b] of laeufe(belegt.map((x) => !x))) if (b - a < 3 && a > 0 && b < n - 1) for (let i = a; i <= b; i++) belegt[i] = true;  // kurze Lücken schließen
-  const r = laeufe(belegt).filter(([a, b]) => b - a >= 4);
+  const r = laeufe(belegt).filter(([a, b]) => b - a >= 4 && Math.max(...leer.slice(a, b + 1)) > 20);
   const imLauf = r.flatMap(([a, b]) => diffs.slice(a + 1, b + 1)).sort((x, y) => x - y);
   const ruhig = Math.max(2.5, 1.5 * (imLauf[Math.floor(imLauf.length / 2)] ?? 2));
   lab.clips = r.map(([a, b], k) => {
@@ -272,7 +277,7 @@ function schlageClipsVor() {
     const von = k === 0 ? 0 : Math.floor((r[k - 1][1] + a) / 2) + 1, bis = k === r.length - 1 ? n - 1 : Math.floor((b + r[k + 1][0]) / 2);
     return { n: k + 1, von, bis, liegt, weg: Math.min(b + 1, bis), ex: null, stoerung: lab.art === "stoer" ? "hand" : null };
   });
-  ordneKartenZu(); status(`${lab.clips.length} Clips vorgeschlagen (Schwelle Schärfe ${Math.exp(schwelle).toFixed(0)}, ruhig < ${ruhig.toFixed(1)})`);
+  ordneKartenZu(); status(`${lab.clips.length} Clips vorgeschlagen (Schwelle leer ${schwelle.toFixed(1)}, ruhig < ${ruhig.toFixed(1)})`);
 }
 function stapelVon(id) { return stapelAlle.find((s) => s.id === id); }
 function ordneKartenZu() {
@@ -318,7 +323,7 @@ function zeichne() {
   $("bild").src = bildUrl(pos);
   for (const d of [1, 2, 3, -1]) { const j = pos + d; if (j >= 0 && j < n) new Image().src = bildUrl(j); }
   const f = aufnahme.frames[pos];
-  $("bildInfo").textContent = `Bild ${pos} / ${n - 1} · Schärfe ${f.schaerfe?.toFixed(0) ?? "–"} · Bewegung ${diffs?.[pos] ?? "–"} · t ${f.t ? ((f.t - aufnahme.frames[0].t) / 1000).toFixed(2) + " s" : "–"}`;
+  $("bildInfo").textContent = `Bild ${pos} / ${n - 1} · Schärfe ${f.schaerfe?.toFixed(0) ?? "–"} · Bewegung ${diffs?.[pos] ?? "–"} · Abstand leer ${leer?.[pos] ?? "–"} · t ${f.t ? ((f.t - aufnahme.frames[0].t) / 1000).toFixed(2) + " s" : "–"}`;
   zeigeClipDetail();
   for (const tr of document.querySelectorAll("#clips tr[data-k]")) tr.classList.toggle("an", Number(tr.dataset.k) === aktClip());
 }
