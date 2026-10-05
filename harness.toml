@@ -1,0 +1,11 @@
+# Projektspezifische Werte des Harness. Der Harness-Code selbst bleibt projektneutral
+# und liest alles Projektbezogene aus dieser Datei. Hier stehen keine Geheimnisse.
+
+# GitHub App der Agenten (ADR 0005, „Rollen“). Der Private Key liegt offline beim Owner
+# und später nur im Broker.
+[github_app]
+slug = "kaiba-agent"
+app_id = 5202274
+installation_id = 168276221
+# Für die noreply-Adresse der Bot-Commits: <bot_user_id>+<slug>[bot]@users.noreply.github.com
+bot_user_id = 338301849
