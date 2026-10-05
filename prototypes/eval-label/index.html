@@ -273,16 +273,23 @@ async function berechneDiffs() {
 function schlageClipsVor() {
   const f = aufnahme.frames, n = f.length;
   // Belegt = Bild weicht vom leeren Hintergrund ab (Schärfe allein trennt nicht: wegbewegte Karten sind unscharf).
-  // Schwelle = 4 × Rauschen der leeren Bilder (20-%-Quantil), mindestens 10 – auch ein Kartenrand im Bild zählt als belegt.
-  // Ein Clip braucht irgendwo eine volle Karte (> 20); Handschatten bleiben darunter.
-  const schwelle = Math.max(10, 4 * [...leer].sort((x, y) => x - y)[Math.floor(n * 0.2)]);
-  let belegt = leer.map((v) => v > schwelle);
-  const laeufe = (arr) => { const r = []; let a = null; arr.forEach((b, i) => { if (b && a === null) a = i; if (!b && a !== null) { r.push([a, i - 1]); a = null; } }); if (a !== null) r.push([a, arr.length - 1]); return r; };
-  for (const [a, b] of laeufe(belegt.map((x) => !x))) if (b - a < 3 && a > 0 && b < n - 1) for (let i = a; i <= b; i++) belegt[i] = true;  // kurze Lücken schließen
-  // Mindestdauer in Zeit, nicht in Bildern (die Bildrate schwankt 8–22/s). Stapel-Lauf: Schein-Clips (Hand,
+  // Schwellen relativ zur Aufnahme, weil eine Karte im Dunkeln nur halb so stark vom Tisch abweicht (Spitze ~21 statt ~40):
+  // 1. Vorläufig belegt über 4 × Rauschen der leeren Bilder (20-%-Quantil), mindestens 5.
+  // 2. Typische Kartenspitze = Median der Spitzen; endgültig belegt ab 30 % davon (auch ein Kartenrand zählt),
+  //    ein Clip braucht eine Spitze von mindestens 60 % – Handschatten bleiben darunter.
+  // Mindestdauer in Zeit, nicht in Bildern (die Bildrate schwankt 7–22/s). Stapel-Lauf: Schein-Clips (Hand,
   // Ränder) bisher ≤ 212 ms, echte Karten ≥ 498 ms → 350 ms. Störclips: nur 150 ms, dort sind Hand-Clips gewollt.
-  const minMs = lab.art === "stoer" ? 150 : 350, ms = (a, b) => (f[b].t ?? 0) - (f[a].t ?? 0);
-  const r = laeufe(belegt).filter(([a, b]) => ms(a, b) >= minMs && Math.max(...leer.slice(a, b + 1)) > 20);
+  const laeufe = (arr) => { const r = []; let a = null; arr.forEach((b, i) => { if (b && a === null) a = i; if (!b && a !== null) { r.push([a, i - 1]); a = null; } }); if (a !== null) r.push([a, arr.length - 1]); return r; };
+  const minMs = lab.art === "stoer" ? 150 : 350, ms = (a, b) => (f[b].t ?? 0) - (f[a].t ?? 0), spitze = ([a, b]) => Math.max(...leer.slice(a, b + 1));
+  const schneide = (schwelle) => {
+    const belegt = leer.map((v) => v > schwelle);
+    for (const [a, b] of laeufe(belegt.map((x) => !x))) if (b - a < 3 && a > 0 && b < n - 1) for (let i = a; i <= b; i++) belegt[i] = true;  // kurze Lücken schließen
+    return laeufe(belegt).filter(([a, b]) => ms(a, b) >= minMs);
+  };
+  const vorlaeufig = schneide(Math.max(5, 4 * [...leer].sort((x, y) => x - y)[Math.floor(n * 0.2)]));
+  const spitzen = vorlaeufig.map(spitze).sort((x, y) => x - y), typisch = spitzen[Math.floor(spitzen.length / 2)] ?? 40;
+  const schwelle = Math.max(5, 0.3 * typisch);
+  const r = schneide(schwelle).filter((x) => spitze(x) >= 0.6 * typisch);
   const imLauf = r.flatMap(([a, b]) => diffs.slice(a + 1, b + 1)).sort((x, y) => x - y);
   const ruhig = Math.max(2.5, 1.5 * (imLauf[Math.floor(imLauf.length / 2)] ?? 2));
   lab.clips = r.map(([a, b], k) => {
