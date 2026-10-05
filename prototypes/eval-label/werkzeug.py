@@ -275,7 +275,7 @@ def baue_manifest() -> dict:
             "name": (k or {}).get("name"), "sprache": (k or {}).get("sprache"), "glanz": (k or {}).get("glanz"),
             "proxy": (k or {}).get("proxy"), "haltung": lab.get("haltung"), "licht": lab.get("licht"), "huelle": huelle_von(lab, k),
             "nicht_im_katalog": bool((k or {}).get("nicht_im_katalog")), "schichten": schichten(k) if k else [],
-            "stoerung": c.get("stoerung"),
+            "stoerung": c.get("stoerung"), "notiz": c.get("notiz"),
         })
     ziel = DATEN / "manifest"
     ziel.mkdir(parents=True, exist_ok=True)

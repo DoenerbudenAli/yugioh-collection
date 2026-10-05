@@ -41,5 +41,6 @@ Dieses Format übernimmt [Eval-Gerüst: Manifest, Spuren und Eval-Quittung als G
 | `nicht_im_katalog` | `true` für Token, Skill, Rush Duel, OCG-only |
 | `schichten` | abgeleitete Schichten aus ADR 0008 (Deutsch, Foils, Alt-Arts …) |
 | `stoerung` | `null`, `hand`, `halb`, `verwackelt`, `leer` |
+| `notiz` | Freitext für Sonderfälle, z. B. „überdeckt von der nächsten Karte“ (Clip endet ohne leeres Bild) |
 
 Clips werden nur angehängt. Eine neue Aufnahme bringt neue Zeilen, eine alte Aufnahme wird nie überschrieben.
