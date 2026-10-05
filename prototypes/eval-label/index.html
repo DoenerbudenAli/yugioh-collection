@@ -279,9 +279,10 @@ function schlageClipsVor() {
   let belegt = leer.map((v) => v > schwelle);
   const laeufe = (arr) => { const r = []; let a = null; arr.forEach((b, i) => { if (b && a === null) a = i; if (!b && a !== null) { r.push([a, i - 1]); a = null; } }); if (a !== null) r.push([a, arr.length - 1]); return r; };
   for (const [a, b] of laeufe(belegt.map((x) => !x))) if (b - a < 3 && a > 0 && b < n - 1) for (let i = a; i <= b; i++) belegt[i] = true;  // kurze Lücken schließen
-  // Im Stapel-Lauf dauert ein Clip mindestens 9 Bilder (kürzester echter bisher 14); eine durchfahrende Hand ist kürzer.
-  const minDauer = lab.art === "stoer" ? 4 : 8;
-  const r = laeufe(belegt).filter(([a, b]) => b - a >= minDauer && Math.max(...leer.slice(a, b + 1)) > 20);
+  // Mindestdauer in Zeit, nicht in Bildern (die Bildrate schwankt 8–22/s). Stapel-Lauf: Schein-Clips (Hand,
+  // Ränder) bisher ≤ 212 ms, echte Karten ≥ 498 ms → 350 ms. Störclips: nur 150 ms, dort sind Hand-Clips gewollt.
+  const minMs = lab.art === "stoer" ? 150 : 350, ms = (a, b) => (f[b].t ?? 0) - (f[a].t ?? 0);
+  const r = laeufe(belegt).filter(([a, b]) => ms(a, b) >= minMs && Math.max(...leer.slice(a, b + 1)) > 20);
   const imLauf = r.flatMap(([a, b]) => diffs.slice(a + 1, b + 1)).sort((x, y) => x - y);
   const ruhig = Math.max(2.5, 1.5 * (imLauf[Math.floor(imLauf.length / 2)] ?? 2));
   lab.clips = r.map(([a, b], k) => {
