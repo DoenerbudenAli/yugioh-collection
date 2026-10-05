@@ -57,7 +57,11 @@ _Avoid_: Fehlerkennung (eine Erkennung darf irren, eine Buchung nicht)
 Zwei Buchungen für dasselbe Exemplar.
 
 **Verlorenes Exemplar**:
-Ein Exemplar, das im Kamerabild lag, ohne dass eine Buchung oder ein Eintrag in der Prüf-Warteschlange entstanden ist.
+Ein Exemplar, für das die Erkennung Kandidaten lieferte, ohne dass eine Buchung oder ein Eintrag in der Prüf-Warteschlange entstanden ist.
+
+**Unerkanntes Exemplar**:
+Ein Exemplar, das im Kamerabild lag, ohne dass die Erkennung je einen Kandidaten lieferte; es entsteht kein Scan, und der Owner legt es mangels Ton zur Seite.
+_Avoid_: verlorenes Exemplar (ein unerkanntes geht nicht still verloren)
 
 **Scan-Sitzung**:
 Die Zeit vom Öffnen bis zum Schließen der Scan-Ansicht; Rückgängig wirkt nur innerhalb einer Scan-Sitzung.
