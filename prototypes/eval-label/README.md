@@ -32,7 +32,7 @@ Dieses Format übernimmt [Eval-Gerüst: Manifest, Spuren und Eval-Quittung als G
 | `art_variante` | YGOProDeck-Bild-ID des Artworks |
 | `name` | Anzeigename (nur zur Lesbarkeit) |
 | `sprache` | `de`, `en`, `andere` |
-| `seltenheit` | `normal`, `rare`, `super`, `ultra`, `secret`, `ghost`, `starlight`, `ultimate`, `andere` |
+| `glanz` | `kein` (auch Rare: nur der Name glänzt), `bild` (Artwork glänzt: Super, Ultra, Secret …), `ganz` (ganze Karte: Ghost, Starlight, Ultimate, Collector's …); nur für die Erkennbarkeit, keine Seltenheit |
 | `proxy` | `null`, `ygoprodeck-bild`, `scan`, `eigen` |
 | `haltung` | `frei`, `halterung` |
 | `licht` | `normal`, `abend` |

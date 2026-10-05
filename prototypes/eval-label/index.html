@@ -95,7 +95,7 @@ const status = (t, schlecht) => { $("status").textContent = t; $("status").class
 const klein = (bildId) => bildId ? `/bild/klein/${bildId}.jpg` : "";
 
 const SPRACHEN = ["de", "en", "andere"];
-const SELTENHEIT = ["normal", "rare", "super", "ultra", "secret", "ghost", "starlight", "ultimate", "andere"];
+const GLANZ = [["kein", "Glanz: kein"], ["bild", "Glanz: Bild glänzt"], ["ganz", "Glanz: ganze Karte"]];  // nur Erkennbarkeit, keine Seltenheit
 const PROXY = [["", "kein Proxy"], ["ygoprodeck-bild", "Proxy: Druck YGOProDeck-Bild"], ["scan", "Proxy: Druck aus Scan"], ["eigen", "Proxy: eigenes Artwork"]];
 const HUELLE = ["ohne", "mit"];
 const STOERUNG = [["", "–"], ["hand", "Hand davor"], ["halb", "halb im Bild"], ["verwackelt", "verwackelt"], ["leer", "leer"]];
@@ -120,7 +120,7 @@ async function ladeStapel() {
 }
 $("neuerStapel").onclick = async () => {
   const nr = Math.max(0, ...stapelAlle.map((s) => Number(s.id.slice(1)))) + 1;
-  stapel = { id: "S" + String(nr).padStart(2, "0"), name: "", naechste: 1, standard: { sprache: "de", seltenheit: "normal", proxy: "", huelle: "ohne", altkarte: false, aehnlich: false }, karten: [] };
+  stapel = { id: "S" + String(nr).padStart(2, "0"), name: "", naechste: 1, standard: { sprache: "de", glanz: "kein", proxy: "", huelle: "ohne", altkarte: false, aehnlich: false }, karten: [] };
   await speichereStapel(true); await ladeStapel(); zeigeStapel();
 };
 async function speichereStapel(sofort) {
@@ -133,7 +133,7 @@ function neueKarte(karte, bildId) {
   const d = stapel.standard;
   const k = { ex: `${stapel.id}-${String(stapel.naechste++).padStart(2, "0")}`, passcode: karte ? karte.id : null, ygopro_id: karte ? karte.id : null, bild_id: karte ? bildId : null,
     name: karte ? (karte.name_de && d.sprache === "de" ? `${karte.name_de} / ${karte.name}` : karte.name) : null,
-    sprache: d.sprache, seltenheit: d.seltenheit, proxy: d.proxy || null, huelle: d.huelle, altkarte: d.altkarte, aehnlich: d.aehnlich,
+    sprache: d.sprache, glanz: d.glanz, proxy: d.proxy || null, huelle: d.huelle, altkarte: d.altkarte, aehnlich: d.aehnlich,
     nicht_im_katalog: karte ? ["token", "skill"].includes(karte.frame) : true };
   stapel.karten.push(k); speichereStapel(); zeigeKarten();
   $("suche").value = ""; $("treffer").replaceChildren(); $("arten").replaceChildren(); $("suche").focus();
@@ -144,7 +144,7 @@ function zeigeStapel() {
   const haken = (feld, text) => el("label", {}, el("input", { type: "checkbox", checked: d[feld], onchange: (e) => { d[feld] = e.target.checked; speichereStapel(); } }), " " + text);
   $("stapelEditor").replaceChildren(
     el("div", { class: "zeile" }, el("b", {}, stapel.id), el("input", { type: "text", value: stapel.name, placeholder: "Name, z. B. DE Foils", size: 30, oninput: (e) => { stapel.name = e.target.value; speichereStapel(); } })),
-    el("div", { class: "zeile mut" }, "Standard für neue Karten:", std("sprache", SPRACHEN), std("seltenheit", SELTENHEIT), std("proxy", PROXY), std("huelle", HUELLE.map((h) => [h, "Hülle " + h])), haken("altkarte", "Altkarte"), haken("aehnlich", "ähnliches Artwork")),
+    el("div", { class: "zeile mut" }, "Standard für neue Karten:", std("sprache", SPRACHEN), std("glanz", GLANZ), std("proxy", PROXY), std("huelle", HUELLE.map((h) => [h, "Hülle " + h])), haken("altkarte", "Altkarte"), haken("aehnlich", "ähnliches Artwork")),
     el("div", { class: "zeile" }, el("input", { id: "suche", type: "text", placeholder: "Passcode (8 Ziffern) oder Name – Enter übernimmt", autocomplete: "off" }),
       el("button", { onclick: nichtImKatalog }, "nicht im Katalog …"), el("button", { onclick: () => { const l = stapel.karten.at(-1); if (l) neueKarte(l.ygopro_id ? { id: l.ygopro_id, name: l.name, frame: null } : null, l.bild_id); } }, "gleiche Karte nochmal")),
     el("ul", { id: "treffer" }), el("div", { id: "arten" }),
@@ -192,14 +192,14 @@ function zeigeKarten() {
     const schiebe = (d) => { const j = i + d; if (j < 0 || j >= stapel.karten.length) return; [stapel.karten[i], stapel.karten[j]] = [stapel.karten[j], stapel.karten[i]]; speichereStapel(); zeigeKarten(); };
     return el("tr", {}, el("td", {}, String(i + 1)), el("td", { class: "mut" }, k.ex), el("td", {}, k.bild_id ? el("img", { src: klein(k.bild_id) }) : ""),
       el("td", {}, k.name, el("div", { class: "mut" }, k.passcode ?? "")),
-      el("td", {}, auswahl(SPRACHEN, k.sprache, setz("sprache"))), el("td", {}, auswahl(SELTENHEIT, k.seltenheit, setz("seltenheit"))),
+      el("td", {}, auswahl(SPRACHEN, k.sprache, setz("sprache"))), el("td", {}, auswahl(GLANZ, k.glanz, setz("glanz"))),
       el("td", {}, auswahl(PROXY, k.proxy ?? "", setz("proxy"))), el("td", {}, auswahl(HUELLE, k.huelle, setz("huelle"))),
       el("td", {}, haken("altkarte")), el("td", {}, haken("aehnlich")), el("td", {}, haken("nicht_im_katalog")),
       el("td", {}, el("button", { onclick: () => schiebe(-1), title: "nach oben" }, "↑"), el("button", { onclick: () => schiebe(1), title: "nach unten" }, "↓"),
         el("button", { onclick: () => { if (confirm(`${k.ex} löschen?`)) { stapel.karten.splice(i, 1); speichereStapel(); zeigeKarten(); } } }, "✕")));
   };
   $("kartenTab").replaceChildren(el("p", {}, el("b", {}, `${stapel.karten.length} Karten`), el("span", { class: "mut" }, " – Reihenfolge = Scan-Reihenfolge, oberste Karte zuerst.")),
-    el("table", { class: "tab-karten" }, el("tr", {}, ["#", "Exemplar", "", "Karte", "Sprache", "Seltenheit", "Proxy", "Hülle", "Altkarte", "ähnlich", "nicht im Katalog", ""].map((t) => el("th", {}, t))),
+    el("table", { class: "tab-karten" }, el("tr", {}, ["#", "Exemplar", "", "Karte", "Sprache", "Glanz", "Proxy", "Hülle", "Altkarte", "ähnlich", "nicht im Katalog", ""].map((t) => el("th", {}, t))),
       stapel.karten.map(zeile)));
 }
 

@@ -32,8 +32,6 @@ PI_CLIPS = os.environ.get("PI_CLIPS", "pi:/srv/data/yugioh/kamera-sonde/clips")
 PORT = int(os.environ.get("PORT", "8770"))
 NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 
-FOILS = {"super", "ultra", "secret"}
-SONDER = {"ghost", "starlight", "ultimate"}
 NICHT_IM_KATALOG_TYPEN = {"token", "skill"}
 
 QUOTEN = [  # Schicht, Minimum (ADR 0008); None = alle vorhandenen
@@ -182,9 +180,9 @@ def schichten(k: dict) -> list[str]:
         s.append("Deutsch")
     if k.get("sprache") == "en":
         s.append("Englisch")
-    if k.get("seltenheit") in FOILS:
+    if k.get("glanz") == "bild":
         s.append("Foils")
-    if k.get("seltenheit") in SONDER:
+    if k.get("glanz") == "ganz":
         s.append("Ghost/Starlight/Ultimate")
     if k.get("altkarte"):
         s.append("Altkarten")
@@ -272,7 +270,7 @@ def baue_manifest() -> dict:
             "liegt_ruhig": c.get("liegt"), "ist_weg": c.get("weg"), "exemplar": c.get("ex"),
             "teil": teil[c["ex"]] if c.get("ex") in teil else ("kalibrier" if stoer % 2 == 0 else "pruef"),
             "passcode": (k or {}).get("passcode"), "ygoprodeck_id": (k or {}).get("ygopro_id"), "art_variante": (k or {}).get("bild_id"),
-            "name": (k or {}).get("name"), "sprache": (k or {}).get("sprache"), "seltenheit": (k or {}).get("seltenheit"),
+            "name": (k or {}).get("name"), "sprache": (k or {}).get("sprache"), "glanz": (k or {}).get("glanz"),
             "proxy": (k or {}).get("proxy"), "haltung": lab.get("haltung"), "licht": lab.get("licht"), "huelle": huelle_von(lab, k),
             "nicht_im_katalog": bool((k or {}).get("nicht_im_katalog")), "schichten": schichten(k) if k else [],
             "stoerung": c.get("stoerung"),
