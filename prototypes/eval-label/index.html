@@ -51,6 +51,11 @@ th { font-weight:600; font-size:12px; color:var(--mu); }
 .taste { display:inline-block; border:1px solid var(--li); border-bottom-width:2px; border-radius:4px; padding:0 5px; font-size:12px; background:#fff; }
 .vergleich { display:flex; gap:8px; align-items:flex-start; }
 .vergleich img { height:150px; border-radius:4px; }
+#streifen { display:grid; grid-template-columns:repeat(7, 1fr); gap:3px; margin-bottom:6px; }
+#streifen figure { margin:0; cursor:pointer; text-align:center; font-size:11px; color:var(--mu); }
+#streifen img { width:100%; border-radius:3px; border:3px solid transparent; display:block; }
+#streifen figure.mitte img { border-color:var(--gut); }
+.pruefhinweis { background:var(--gelb); border-radius:6px; padding:6px 10px; margin:6px 0; font-size:13px; }
 </style>
 </head>
 <body>
@@ -204,7 +209,7 @@ function zeigeKarten() {
 }
 
 // ================= 2 · Labeln =================
-let aufnahme = null, lab = null, pos = 0, diffs = null, leer = null, labTimer = null;
+let aufnahme = null, lab = null, pos = 0, diffs = null, leer = null, grau = null, labTimer = null;
 async function ladeAufnahmen() {
   status("lade Aufnahmen …");
   const a = await api("/api/aufnahmen"); stapelAlle = await api("/api/stapel");
@@ -223,12 +228,11 @@ async function oeffneAufnahme(ordner) {
   status("lade " + ordner + " …");
   aufnahme = await api("/api/aufnahme/" + ordner); pos = 0;
   lab = aufnahme.labels || vorschlagKopf(ordner);
-  const ok = lab.analyse?.v === 2 && lab.analyse.diffs.length === aufnahme.frames.length;
-  diffs = ok ? lab.analyse.diffs : null; leer = ok ? lab.analyse.leer : null;
+  diffs = leer = grau = null; delete lab.analyse;  // Analyse dauert Sekunden, kein Cache
   zeigeLabelEditor(); ladeAufnahmen();
-  if (!diffs) { ({ diffs, leer } = await berechneDiffs()); lab.analyse = { v: 2, diffs, leer }; }
+  ({ diffs, leer, grau } = await berechneDiffs());
   if (!lab.clips.length) schlageClipsVor();
-  speichereLabels(); zeichne();
+  speichereLabels(); zumUngeprueften();
 }
 function vorschlagKopf(ordner) {
   const n = ordner.toLowerCase(), s = n.match(/s(\d+)/);
@@ -242,6 +246,7 @@ function speichereLabels() {
 }
 const bildUrl = (i) => `/aufnahmen/${aufnahme.ordner}/${aufnahme.frames[i].datei}`;
 
+function abstand(a, b) { if (!a || !b) return 0; let s = 0; for (let p = 0; p < 384; p++) s += Math.abs(a[p] - b[p]); return +(s / 384).toFixed(2); }
 async function berechneDiffs() {
   // Mittlere Grauwert-Differenz zum Vorgänger auf 16×24 Pixeln – Maß für Bewegung („liegt ruhig“).
   // Jedes Bild ohne seinen Mittelwert, damit Belichtungsdrift nicht als Bewegung oder Karte zählt.
@@ -250,13 +255,12 @@ async function berechneDiffs() {
   const lade = (i) => new Promise((ok) => { const im = new Image(); im.onload = () => { g.drawImage(im, 0, 0, 16, 24); const d = g.getImageData(0, 0, 16, 24).data; const a = new Float32Array(384); let m = 0; for (let p = 0; p < 384; p++) { a[p] = (d[4 * p] + d[4 * p + 1] + d[4 * p + 2]) / 3; m += a[p]; } m /= 384; for (let p = 0; p < 384; p++) a[p] -= m; grau[i] = a; ok(); }; im.onerror = () => { grau[i] = null; ok(); }; im.src = bildUrl(i); });
   let naechst = 0;
   await Promise.all(Array.from({ length: 16 }, async () => { while (naechst < n) { const i = naechst++; await lade(i); if (++fertig % 50 === 0) status(`analysiere Bewegung ${fertig}/${n} …`); } }));
-  const abstand = (a, b) => { if (!a || !b) return 0; let s = 0; for (let p = 0; p < 384; p++) s += Math.abs(a[p] - b[p]); return +(s / 384).toFixed(2); };
   const d = grau.map((a, i) => abstand(a, grau[i - 1]));
   // Leerer Hintergrund = Median der ruhigen, unscharfen Bilder. Bewegte Karten sind auch unscharf, aber nicht ruhig.
   const kandidaten = grau.map((a, i) => i).filter((i) => grau[i] && d[i] < 2).sort((x, y) => (aufnahme.frames[x].schaerfe ?? 0) - (aufnahme.frames[y].schaerfe ?? 0)).slice(0, 30);
   const ref = new Float32Array(384);
   for (let p = 0; p < 384; p++) { const w = kandidaten.map((i) => grau[i][p]).sort((x, y) => x - y); ref[p] = w[Math.floor(w.length / 2)] ?? 0; }
-  return { diffs: d, leer: grau.map((a) => abstand(a, ref)) };
+  return { diffs: d, leer: grau.map((a) => abstand(a, ref)), grau };
 }
 function schlageClipsVor() {
   const f = aufnahme.frames, n = f.length;
@@ -271,9 +275,9 @@ function schlageClipsVor() {
   const imLauf = r.flatMap(([a, b]) => diffs.slice(a + 1, b + 1)).sort((x, y) => x - y);
   const ruhig = Math.max(2.5, 1.5 * (imLauf[Math.floor(imLauf.length / 2)] ?? 2));
   lab.clips = r.map(([a, b], k) => {
-    let liegt = null;
+    // Vorschlag „liegt ruhig“ = erstes Bild mit drei ruhigen Nachfolgern. Freihändig unzuverlässig → Owner prüft (Enter).
+    let liegt = a;
     for (let i = a + 1; i <= b - 3; i++) if (diffs[i + 1] < ruhig && diffs[i + 2] < ruhig && diffs[i + 3] < ruhig) { liegt = i + 1; break; }
-    if (liegt === null) liegt = a;
     const von = k === 0 ? 0 : Math.floor((r[k - 1][1] + a) / 2) + 1, bis = k === r.length - 1 ? n - 1 : Math.floor((b + r[k + 1][0]) / 2);
     return { n: k + 1, von, bis, liegt, weg: Math.min(b + 1, bis), ex: null, stoerung: lab.art === "stoer" ? "hand" : null };
   });
@@ -284,6 +288,10 @@ function ordneKartenZu() {
   const s = stapelVon(lab.stapel); if (lab.art === "stoer" || !s) { zeigeClips(); return; }
   lab.clips.forEach((c, k) => { c.n = k + 1; c.ex = s.karten[k]?.ex ?? null; });
   zeigeClips();
+}
+function zumUngeprueften() {
+  const c = lab.clips.find((x) => !x.liegt_geprueft && !x.stoerung);
+  if (c) geheZu(c.liegt); else { zeichne(); status("Alle „liegt ruhig“ geprüft ✓"); }
 }
 function aktClip() { return lab.clips.findIndex((c) => pos >= c.von && pos <= c.bis); }
 function zeigeLabelEditor() {
@@ -301,8 +309,10 @@ function zeigeLabelEditor() {
       el("span", { class: "taste" }, "N/P"), " nächster/voriger Clip ", el("span", { class: "taste" }, "L"), " liegt ruhig ", el("span", { class: "taste" }, "W"), " ist weg ",
       el("span", { class: "taste" }, "T"), " Clip hier trennen ", el("span", { class: "taste" }, "V"), " mit nächstem verbinden ", el("span", { class: "taste" }, "X"), " Clip löschen ",
       el("span", { class: "taste" }, "Leertaste"), " abspielen"),
+    el("div", { class: "pruefhinweis" }, el("b", {}, "„liegt ruhig“ prüfen: "), "mit ", el("span", { class: "taste" }, "←/→"), " das erste Bild suchen, in dem die Karte ganz im Bild ist und nicht mehr geschoben wird (Wackeln der Hand ist egal), dann ",
+      el("span", { class: "taste" }, "Enter"), " – bestätigt und springt zum nächsten Clip. Mittleres Bild im Streifen = aktuelles Bild."),
     el("div", { id: "zaehlung" }),
-    el("div", { class: "labelraster" }, el("div", {}, el("img", { id: "bild" }), el("div", { id: "bildInfo", class: "mut" })), el("div", {}, el("div", { id: "clipDetail" }), el("div", { id: "clips" }))));
+    el("div", { class: "labelraster" }, el("div", {}, el("div", { id: "streifen" }), el("img", { id: "bild" }), el("div", { id: "bildInfo", class: "mut" })), el("div", {}, el("div", { id: "clipDetail" }), el("div", { id: "clips" }))));
   const zl = $("zeitleiste");
   const spring = (e) => { const r = zl.getBoundingClientRect(); geheZu(Math.round((e.clientX - r.left) / r.width * (aufnahme.frames.length - 1))); };
   zl.onmousedown = (e) => { spring(e); zl.onmousemove = spring; }; window.onmouseup = () => { zl.onmousemove = null; };
@@ -321,6 +331,8 @@ function zeichne() {
   if (diffs) { const dMax = Math.max(...diffs, 1); g.strokeStyle = "#c78a00"; g.beginPath(); diffs.forEach((v, i) => { const y = H - 2 - Math.min(1, v / dMax) * 30; i ? g.lineTo(x(i), y) : g.moveTo(x(i), y); }); g.stroke(); }
   g.fillStyle = "#000"; g.fillRect(x(pos) - 1, 0, 2, H);
   $("bild").src = bildUrl(pos);
+  $("streifen").replaceChildren(...[-3, -2, -1, 0, 1, 2, 3].map((d) => { const j = pos + d;
+    return j < 0 || j >= n ? el("div") : el("figure", { class: d === 0 ? "mitte" : null, onclick: () => geheZu(j) }, el("img", { src: bildUrl(j) }), el("figcaption", {}, String(j))); }));
   for (const d of [1, 2, 3, -1]) { const j = pos + d; if (j >= 0 && j < n) new Image().src = bildUrl(j); }
   const f = aufnahme.frames[pos];
   $("bildInfo").textContent = `Bild ${pos} / ${n - 1} · Schärfe ${f.schaerfe?.toFixed(0) ?? "–"} · Bewegung ${diffs?.[pos] ?? "–"} · Abstand leer ${leer?.[pos] ?? "–"} · t ${f.t ? ((f.t - aufnahme.frames[0].t) / 1000).toFixed(2) + " s" : "–"}`;
@@ -339,7 +351,8 @@ function zeigeClipDetail() {
 function zeigeClips() {
   const s = stapelVon(lab.stapel), soll = s ? s.karten.length : null;
   if ($("zaehlung")) $("zaehlung").replaceChildren(lab.art === "stoer" ? el("span", { class: "mut" }, `${lab.clips.length} Störclips`) :
-    el("span", { class: soll === lab.clips.length ? "gut" : "warn" }, `${lab.clips.length} Clips · Stapel hat ${soll ?? "?"} Karten${soll === lab.clips.length ? " ✓" : " – Schnitte prüfen (T trennen, V verbinden, X löschen)"}`));
+    el("span", {}, el("span", { class: soll === lab.clips.length ? "gut" : "warn" }, `${lab.clips.length} Clips · Stapel hat ${soll ?? "?"} Karten${soll === lab.clips.length ? " ✓" : " – Schnitte prüfen (T trennen, V verbinden, X löschen)"}`),
+      (() => { const zu = lab.clips.filter((c) => !c.stoerung), ok = zu.filter((c) => c.liegt_geprueft).length; return el("span", { class: ok === zu.length ? "gut" : "warn" }, ` · „liegt ruhig“ geprüft ${ok}/${zu.length}`); })()));
   if (!$("clips")) return;
   const exOpt = [["", "– keine –"], ...(s ? s.karten.map((k) => [k.ex, `${k.ex} · ${k.name}`]) : [])];
   $("clips").replaceChildren(el("table", {}, el("tr", {}, ["#", "liegt", "Karte (Soll)", "Exemplar", "liegt", "weg", "Störung"].map((t) => el("th", {}, t))),
@@ -347,7 +360,7 @@ function zeigeClips() {
       return el("tr", { "data-k": k, onclick: (e) => { if (e.target.tagName !== "SELECT") geheZu(c.liegt); } }, el("td", {}, String(c.n)), el("td", {}, el("img", { src: bildUrl(c.liegt), loading: "lazy" })),
         el("td", {}, info?.bild_id ? el("img", { src: klein(info.bild_id), loading: "lazy" }) : ""),
         el("td", {}, auswahl(exOpt, c.ex ?? "", (v) => { c.ex = v || null; speichereLabels(); zeigeClips(); zeichne(); })),
-        el("td", {}, String(c.liegt)), el("td", {}, String(c.weg)),
+        el("td", {}, String(c.liegt) + (c.liegt_geprueft ? " ✓" : "")), el("td", {}, String(c.weg)),
         el("td", {}, auswahl(STOERUNG, c.stoerung ?? "", (v) => { c.stoerung = v || null; speichereLabels(); })));
     })));
   zeichne();
@@ -362,7 +375,8 @@ document.addEventListener("keydown", (e) => {
   else if (taste === "ArrowLeft") geheZu(pos - schritt);
   else if (taste === "n") { const nx = lab.clips.find((x) => x.von > pos); if (nx) geheZu(nx.liegt); }
   else if (taste === "p") { const vs = lab.clips.filter((x) => x.bis < (c ? c.von : pos)); if (vs.length) geheZu(vs.at(-1).liegt); }
-  else if (taste === "l" && c) aendere(() => { c.liegt = pos; });
+  else if (taste === "l" && c) aendere(() => { c.liegt = pos; c.liegt_geprueft = true; });
+  else if (taste === "Enter" && c) { aendere(() => { c.liegt = pos; c.liegt_geprueft = true; }); zumUngeprueften(); }
   else if (taste === "w" && c) aendere(() => { c.weg = pos; });
   else if (taste === "t" && c && pos > c.von) aendere(() => { const neu = { ...c, von: pos, liegt: Math.max(pos, c.liegt), weg: Math.max(pos, c.weg) }; c.bis = pos - 1; c.liegt = Math.min(c.liegt, c.bis); c.weg = Math.min(c.weg, c.bis); lab.clips.push(neu); ordneKartenZuWennStapel(); });
   else if (taste === "v" && c && lab.clips[k + 1]) aendere(() => { c.bis = lab.clips[k + 1].bis; c.weg = lab.clips[k + 1].weg; lab.clips.splice(k + 1, 1); ordneKartenZuWennStapel(); });

@@ -260,6 +260,8 @@ def baue_manifest() -> dict:
         k = ex.get(c.get("ex") or "")
         if c.get("ex") and not k:
             probleme.append(f"{ordner} Clip {c['n']}: Exemplar {c['ex']} in keinem Stapel")
+        if not c.get("stoerung") and not c.get("liegt_geprueft"):
+            probleme.append(f"{ordner} Clip {c['n']}: „liegt ruhig“ nicht geprüft")
         if c.get("ex") not in teil:
             stoer += 1
         frames = aufnahme_frames(ordner)
@@ -267,7 +269,7 @@ def baue_manifest() -> dict:
             hashes.append(f"{sha256(DATEN / 'aufnahmen' / ordner / frames[i]['datei'])}  aufnahmen/{ordner}/{frames[i]['datei']}")
         zeilen.append({
             "clip": f"{ordner}/{c['n']:03d}", "aufnahme": ordner, "von": c["von"], "bis": c["bis"],
-            "liegt_ruhig": c.get("liegt"), "ist_weg": c.get("weg"), "exemplar": c.get("ex"),
+            "liegt_ruhig": c.get("liegt"), "liegt_geprueft": bool(c.get("liegt_geprueft")), "ist_weg": c.get("weg"), "exemplar": c.get("ex"),
             "teil": teil[c["ex"]] if c.get("ex") in teil else ("kalibrier" if stoer % 2 == 0 else "pruef"),
             "passcode": (k or {}).get("passcode"), "ygoprodeck_id": (k or {}).get("ygopro_id"), "art_variante": (k or {}).get("bild_id"),
             "name": (k or {}).get("name"), "sprache": (k or {}).get("sprache"), "glanz": (k or {}).get("glanz"),
