@@ -25,7 +25,7 @@ Dieses Format übernimmt [Eval-Gerüst: Manifest, Spuren und Eval-Quittung als G
 |---|---|
 | `clip` | `<aufnahme>/<nr>`, eindeutig |
 | `aufnahme`, `von`, `bis` | Ordner der Aufnahme und Bildindizes des Clips (inklusive) |
-| `liegt_ruhig`, `ist_weg` | Bildindex „liegt ruhig“ (erstes Bild, in dem die Karte ganz im Bild ist und nicht mehr geschoben wird) und erster Index „ist weg“ |
+| `liegt_ruhig`, `ist_weg` | Bildindex „liegt ruhig“ (erstes Bild, in dem die Karte ganz im Bild ist und nicht mehr geschoben oder gedreht wird; Finger auf der Karte und Wackeln des Handys zählen nicht) und erster Index „ist weg“ |
 | `liegt_geprueft` | `true`, wenn der Owner „liegt ruhig“ von Hand bestätigt hat (Pflicht außer bei Störclips) |
 | `exemplar` | Exemplar-ID `S<stapel>-<nr>`; dasselbe Exemplar in jeder Haltung und Hülle gleich, `null` bei Störclips ohne Karte |
 | `teil` | `kalibrier` oder `pruef`, je Exemplar 50/50 geschichtet nach Schichten |
