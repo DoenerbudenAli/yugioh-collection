@@ -25,6 +25,7 @@ section { display:none; } section.an { display:block; }
 .zeile { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0; }
 input[type=text], select { font:inherit; padding:4px 6px; border:1px solid var(--li); border-radius:5px; background:#fff; }
 button { font:inherit; padding:4px 10px; border:1px solid var(--li); border-radius:5px; background:#fff; cursor:pointer; }
+button.scharf { background:var(--warn); color:#fff; border-color:var(--warn); }
 button.haupt { background:var(--ak); color:#fff; border-color:var(--ak); }
 #suche { font-size:18px; width:420px; padding:8px 10px; }
 #treffer { list-style:none; margin:4px 0; padding:0; max-width:620px; }
@@ -113,6 +114,12 @@ function zeigeTab(t) {
   if (t === "uebersicht") ladeQuoten();
   if (t === "stapel") ladeStapel();
 }
+// Statt confirm() (im Browser-Bereich der App gesperrt): erster Klick fragt, zweiter führt aus.
+function zweimal(knopf, aktion) {
+  if (knopf.dataset.scharf) { delete knopf.dataset.scharf; return aktion(); }
+  const alt = knopf.textContent; knopf.dataset.scharf = "1"; knopf.textContent = "wirklich?"; knopf.classList.add("scharf");
+  setTimeout(() => { if (knopf.dataset.scharf) { delete knopf.dataset.scharf; knopf.textContent = alt; knopf.classList.remove("scharf"); } }, 3000);
+}
 const auswahl = (werte, aktuell, onchange) => el("select", { onchange: (e) => onchange(e.target.value) },
   werte.map((w) => { const [v, t] = Array.isArray(w) ? w : [w, w]; return el("option", { value: v, selected: (aktuell ?? "") === v }, t); }));
 
@@ -158,7 +165,8 @@ function zeigeStapel() {
   zeigeKarten();
 }
 function nichtImKatalog() {
-  const name = prompt("Name der Karte (Token, Rush Duel, Skill, OCG …):"); if (!name) return;
+  // Kein prompt(): Dialoge sind im Browser-Bereich der App gesperrt. Name kommt aus dem Suchfeld.
+  const name = $("suche").value.trim(); if (!name) { status("Erst den Namen ins Suchfeld tippen, dann „nicht im Katalog …“", true); $("suche").focus(); return; }
   const vorher = stapel.karten.length; neueKarte(null, null); const k = stapel.karten[vorher]; k.name = name; k.nicht_im_katalog = true; speichereStapel(); zeigeKarten();
 }
 let treffer = [], trefferAn = 0, sucheNr = 0;
@@ -201,7 +209,7 @@ function zeigeKarten() {
       el("td", {}, auswahl(PROXY, k.proxy ?? "", setz("proxy"))), el("td", {}, auswahl(HUELLE, k.huelle, setz("huelle"))),
       el("td", {}, haken("altkarte")), el("td", {}, haken("aehnlich")), el("td", {}, haken("nicht_im_katalog")),
       el("td", {}, el("button", { onclick: () => schiebe(-1), title: "nach oben" }, "↑"), el("button", { onclick: () => schiebe(1), title: "nach unten" }, "↓"),
-        el("button", { onclick: () => { if (confirm(`${k.ex} löschen?`)) { stapel.karten.splice(i, 1); speichereStapel(); zeigeKarten(); } } }, "✕")));
+        el("button", { title: "zweimal klicken", onclick: (e) => zweimal(e.target, () => { stapel.karten.splice(i, 1); speichereStapel(); zeigeKarten(); }) }, "✕")));
   };
   $("kartenTab").replaceChildren(el("p", {}, el("b", {}, `${stapel.karten.length} Karten`), el("span", { class: "mut" }, " – Reihenfolge = Scan-Reihenfolge, oberste Karte zuerst.")),
     el("table", { class: "tab-karten" }, el("tr", {}, ["#", "Exemplar", "", "Karte", "Sprache", "Glanz", "Proxy", "Hülle", "Altkarte", "ähnlich", "nicht im Katalog", ""].map((t) => el("th", {}, t))),
@@ -301,7 +309,7 @@ function zeigeLabelEditor() {
     el("div", { class: "zeile" }, kopf("stapel", [["", "Stapel?"], ...stapelAlle.map((s) => [s.id, `${s.id} · ${s.name} (${s.karten.length})`])]),
       kopf("haltung", [["frei", "freihändig"], ["halterung", "Halterung"]]), kopf("licht", [["normal", "Licht normal"], ["abend", "Abendlicht"]]),
       kopf("huelle", [["wie-stapel", "Hülle wie Stapel"], ["mit", "alle mit Hülle"], ["ohne", "alle ohne Hülle"]]), kopf("art", [["stapel", "Stapel-Lauf"], ["stoer", "Störclips"]]),
-      el("button", { onclick: () => { if (confirm("Alle Schnitte verwerfen und neu vorschlagen?")) { schlageClipsVor(); speichereLabels(); zeichne(); } } }, "Clips neu vorschlagen"),
+      el("button", { title: "zweimal klicken – verwirft alle Schnitte", onclick: (e) => zweimal(e.target, () => { schlageClipsVor(); speichereLabels(); zeichne(); }) }, "Clips neu vorschlagen"),
       el("button", { onclick: () => { ordneKartenZu(); speichereLabels(); } }, "Karten der Reihe nach zuordnen"),
       el("label", {}, el("input", { type: "checkbox", checked: lab.fertig, onchange: (e) => { lab.fertig = e.target.checked; speichereLabels(); ladeAufnahmen(); } }), " fertig")),
     el("canvas", { id: "zeitleiste", width: 1600, height: 110 }),
@@ -366,7 +374,7 @@ function zeigeClips() {
   zeichne();
 }
 function aendere(fn) { fn(); lab.clips.sort((a, b) => a.von - b.von); lab.clips.forEach((c, k) => { c.n = k + 1; }); speichereLabels(); zeigeClips(); }
-let spielt = null;
+let spielt = null, xScharf = null;
 document.addEventListener("keydown", (e) => {
   if (!$("labeln").classList.contains("an") || !aufnahme || ["INPUT", "SELECT"].includes(e.target.tagName)) return;
   const k = aktClip(), c = lab.clips[k], schritt = e.shiftKey ? 10 : 1;
@@ -380,7 +388,7 @@ document.addEventListener("keydown", (e) => {
   else if (taste === "w" && c) aendere(() => { c.weg = pos; });
   else if (taste === "t" && c && pos > c.von) aendere(() => { const neu = { ...c, von: pos, liegt: Math.max(pos, c.liegt), weg: Math.max(pos, c.weg) }; c.bis = pos - 1; c.liegt = Math.min(c.liegt, c.bis); c.weg = Math.min(c.weg, c.bis); lab.clips.push(neu); ordneKartenZuWennStapel(); });
   else if (taste === "v" && c && lab.clips[k + 1]) aendere(() => { c.bis = lab.clips[k + 1].bis; c.weg = lab.clips[k + 1].weg; lab.clips.splice(k + 1, 1); ordneKartenZuWennStapel(); });
-  else if (taste === "x" && c) { if (confirm(`Clip ${c.n} löschen?`)) aendere(() => { lab.clips.splice(k, 1); ordneKartenZuWennStapel(); }); }
+  else if (taste === "x" && c) { if (xScharf === c) { xScharf = null; aendere(() => { lab.clips.splice(k, 1); ordneKartenZuWennStapel(); }); } else { xScharf = c; status(`Clip ${c.n} löschen? Nochmal X drücken`, true); setTimeout(() => { xScharf = null; }, 3000); } }
   else if (taste === " ") { if (spielt) { clearInterval(spielt); spielt = null; } else spielt = setInterval(() => { if (pos >= aufnahme.frames.length - 1) { clearInterval(spielt); spielt = null; } else geheZu(pos + 1); }, 66); }
   else return;
   e.preventDefault();
