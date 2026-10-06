@@ -1,0 +1,5 @@
+#!/bin/sh
+# gh mit dem Rollen-Token vom Broker. Ohne Token (Broker lehnt ab) läuft gh anonym und scheitert bei Schreibzugriffen.
+GH_TOKEN="$(python3 -m devcontainer.ausweis token)" || unset GH_TOKEN
+export GH_TOKEN
+exec /usr/bin/gh "$@"
