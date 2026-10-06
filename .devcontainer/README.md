@@ -37,12 +37,12 @@ Erst wenn Firewall und Clone stehen, entsteht `/run/harness/bereit`, und erst da
 
 Standard ist DROP. Erlaubt sind:
 
-- GitHub, und zwar die Bereiche `web`, `api` und `git` aus `api.github.com/meta`;
+- GitHub, und zwar die Bereiche aus `[netz] github_meta` (`web`, `api`, `git` aus `api.github.com/meta`);
 - die Domains aus `[netz] domains` in `harness.toml`, nur auf Port 443;
 - der Broker über `host.docker.internal` auf seinem Port;
 - DNS zu den Nameservern des Containers.
 
-Die IPs werden beim Start aufgelöst. Dafür ruft jeder Start einmal anonym `api.github.com/meta` auf. GitHub erlaubt davon 60 je Stunde und IP, für alle Container zusammen. Ist das Limit erschöpft, nennt `docker logs agent-<name>` die Wartezeit. Die Allowlist wird beim Bauen aus dem `harness.toml` von `main` ins Image übernommen. Der Clone im Volume kann sie nicht ändern. **Neue Domains kommen per PR in `harness.toml`**, danach baut der Workflow ein neues Image.
+Die **GitHub-Netze** holt `github-netze.sh` einmal beim Bauen des Images (in der CI mit dem Token des Workflows) und legt sie nach `/etc/harness/github-netze.txt`. Ein Start fragt die GitHub-API also nicht, denn anonym erlaubt GitHub nur 60 Abfragen je Stunde und IP. Ändert GitHub seine Netze, scheitert der Selbsttest mit „github.com ist nicht erreichbar“. Dann baut **Actions → devcontainer → Run workflow** (auf `main`) ein neues Image. Die **Domains** werden bei jedem Start per DNS aufgelöst. Die Allowlist wird beim Bauen aus dem `harness.toml` von `main` ins Image übernommen. Der Clone im Volume kann sie nicht ändern. **Neue Domains kommen per PR in `harness.toml`**, danach baut der Workflow ein neues Image.
 
 Restrisiken:
 

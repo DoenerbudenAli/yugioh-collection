@@ -1,6 +1,6 @@
 #!/bin/bash
-# Netz-Allowlist (ADR 0005, „Netz“): Default DROP, erlaubt sind GitHub (api.github.com/meta), die Domains
-# aus /etc/harness/netz.env (nur HTTPS) und der Broker auf seinem Port. Die IPs werden beim Start aufgelöst.
+# Netz-Allowlist (ADR 0005, „Netz“): Default DROP, erlaubt sind GitHub (Netze aus dem Image), die Domains
+# aus /etc/harness/netz.env (nur HTTPS) und der Broker auf seinem Port. Domains werden beim Start aufgelöst.
 set -euo pipefail
 
 # shellcheck source=/dev/null
@@ -11,23 +11,11 @@ fehler() { echo "firewall: $*" >&2; exit 1; }
 # 1. Erlaubte Adressen sammeln, solange das Netz noch offen ist.
 ipset destroy erlaubt 2>/dev/null || true
 ipset create erlaubt hash:net
-# Die einzige GitHub-API-Abfrage je Start: anonym gilt ein Limit von 60/h je IP (alle Container zusammen).
-meta_url="${HARNESS_GITHUB_META_URL:-https://api.github.com/meta}"
-kopf=$(mktemp)
-status=$(curl -sS --max-time 20 -D "$kopf" -o /tmp/github-meta.json -w '%{http_code}' "$meta_url" || true)
-if [ "$status" != 200 ]; then
-    if grep -qi '^x-ratelimit-remaining: *0' "$kopf"; then
-        reset=$(awk -F': *' 'tolower($1) == "x-ratelimit-reset" {print $2+0}' "$kopf")
-        fehler "GitHub-Abfragelimit erschöpft (anonym 60/h je IP), wieder frei in $(( (reset - $(date +%s)) / 60 + 1 )) min ($(date -u -d "@$reset" +%H:%M) UTC)"
-    fi
-    fehler "$meta_url nicht abrufbar (HTTP ${status:-keine Antwort})"
-fi
-meta=$(cat /tmp/github-meta.json)
-for schluessel in $GITHUB_META; do
-    for netz in $(jq -r --arg s "$schluessel" '.[$s][]? | select(contains(":") | not)' <<<"$meta"); do
-        ipset add erlaubt "$netz" -exist
-    done
-done
+# GitHub-Netze stehen seit dem Bauen im Image (github-netze.sh): Der Start fragt die GitHub-API nicht.
+[ -s /etc/harness/github-netze.txt ] || fehler "keine GitHub-Netze im Image (/etc/harness/github-netze.txt leer)"
+while read -r netz; do
+    if [ -n "$netz" ]; then ipset add erlaubt "$netz" -exist; fi
+done </etc/harness/github-netze.txt
 for domain in $DOMAINS; do
     # getent endet mit 2, wenn es den Namen nicht gibt; die Meldung kommt dann von fehler().
     ips=$(getent ahostsv4 "$domain" | awk '{print $1}' | sort -u || true)
