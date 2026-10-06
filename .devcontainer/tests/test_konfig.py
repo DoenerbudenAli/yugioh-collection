@@ -29,7 +29,6 @@ version = "v1.2.3"
 commit = "0123456789abcdef0123456789abcdef01234567"
 
 [netz]
-github_meta = ["web", "api", "git"]
 domains = ["api.example.org", "pakete.example.org"]
 """
 
@@ -59,10 +58,9 @@ def test_broker_port_und_rollen(konfig: Konfig) -> None:
     assert konfig.rollen == ("bau",)
 
 
-def test_netz_env_hat_genau_drei_zeilen(konfig: Konfig) -> None:
+def test_netz_env_hat_genau_zwei_zeilen(konfig: Konfig) -> None:
     assert netz_env(konfig).splitlines() == [
         "BROKER_PORT=8790",
-        'GITHUB_META="web api git"',
         'DOMAINS="api.example.org pakete.example.org"',
     ]
 
@@ -76,8 +74,7 @@ def test_netz_env_lehnt_unsichere_domains_ab(konfig: Konfig, domain: str) -> Non
 
 def test_echte_harness_toml_laesst_sich_laden() -> None:
     konfig = lade_konfig(REPO_ROOT / "harness.toml")
-    assert konfig.domains
-    assert konfig.github_meta
+    assert "github.com" in konfig.domains  # git clone und push laufen auch über den Proxy
     assert konfig.image.startswith("ghcr.io/")
     skills_liste(konfig)  # wirft bei unsicheren Werten
 

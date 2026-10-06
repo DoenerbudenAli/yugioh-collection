@@ -30,26 +30,39 @@ Einrichtung und Abnahme auf einem neuen Rechner: `& "C:\Program Files\Git\bin\ba
 | Claude Code | `bypassPermissions` ist Standard, Telemetrie und Auto-Update sind aus. Dem Clone vertraut es ohne Rückfrage. |
 | Skills | die Sammlungen aus `[[devcontainer.skills]]` in `harness.toml` als Plugins, siehe [Skills](#skills) |
 
-`einstieg.sh` läuft beim Start als root. Er setzt die Firewall (`firewall.sh`), prüft sie und wechselt dann endgültig zu `agent`. Scheitert die Firewall oder ihr Selbsttest, endet der Container mit Fehler. `docker logs agent-<name>` zeigt warum.
+`einstieg.sh` läuft beim Start als root. Er startet den Egress-Proxy als User `egress`, setzt die Firewall (`firewall.sh`), prüft sie und wechselt dann endgültig zu `agent`. Scheitern Proxy, Firewall oder ihr Selbsttest, endet der Container mit Fehler. `docker logs agent-<name>` zeigt warum.
 
 Erst wenn Firewall und Clone stehen, entsteht `/run/harness/bereit`, und erst danach öffnet `just agent` Claude. Das Verzeichnis ist ein tmpfs (`docker run --tmpfs`). So überlebt das Zeichen keinen Neustart, und das Netz ist in den Sekunden bis zur neuen Firewall nicht offen.
 
 ## Netz
 
-Standard ist DROP. Erlaubt sind:
+Standard ist DROP. Nach außen dürfen nur:
 
-- GitHub, und zwar die Bereiche aus `[netz] github_meta` (`web`, `api`, `git` aus `api.github.com/meta`);
-- die Domains aus `[netz] domains` in `harness.toml`, nur auf Port 443;
+- der **Egress-Proxy** (`devcontainer.proxy`, User `egress`) auf Port 443;
 - der Broker über `host.docker.internal` auf seinem Port;
 - DNS zu den Nameservern des Containers.
 
-Die **GitHub-Netze** holt `github-netze.sh` einmal beim Bauen des Images (in der CI mit dem Token des Workflows) und legt sie nach `/etc/harness/github-netze.txt`. Ein Start fragt die GitHub-API also nicht, denn anonym erlaubt GitHub nur 60 Abfragen je Stunde und IP. Ändert GitHub seine Netze, scheitert der Selbsttest mit „github.com ist nicht erreichbar“. Dann baut **Actions → devcontainer → Run workflow** (auf `main`) ein neues Image. Die **Domains** werden bei jedem Start per DNS aufgelöst. Die Allowlist wird beim Bauen aus dem `harness.toml` von `main` ins Image übernommen. Der Clone im Volume kann sie nicht ändern. **Neue Domains kommen per PR in `harness.toml`**, danach baut der Workflow ein neues Image.
+```
+agent (git, gh, uv, pnpm, npm, curl, Claude)
+   │  HTTPS_PROXY=http://127.0.0.1:3128
+   ▼
+Egress-Proxy (User egress) ── nur Hostnamen aus [netz] domains ──► Internet, Port 443
+   ✗ agent direkt nach außen: verworfen (iptables, owner match)
+```
+
+Der Proxy lässt nur `CONNECT <name>:443` zu, wenn `<name>` in `[netz] domains` in `harness.toml` steht. Außerdem liest er den TLS-ClientHello im Tunnel und kappt ihn, wenn dort ein anderer Name (SNI) steht, gar keiner oder ein verschlüsselter (ECH). So kommt ein Agent nicht über eine IP, die sich ein CDN mit fremden Seiten teilt, zu einer eigenen Seite. Der Proxy löst die Namen selbst auf, `curl --resolve` oder `--connect-to` helfen also nicht. Er schreibt jede Entscheidung nach `docker logs agent-<name>` (`proxy: erlaubt: …`, `proxy: abgewiesen: …`, `proxy: gekappt: …`).
+
+Auch **GitHub** läuft über den Proxy (`github.com` für git, `api.github.com` für gh). Die Werkzeuge finden ihn über `HTTPS_PROXY`/`HTTP_PROXY` aus dem Image, ohne Einstellungen pro Werkzeug. Der Broker ist per `NO_PROXY` ausgenommen.
+
+Die Allowlist wird beim Bauen aus dem `harness.toml` von `main` ins Image übernommen. Der Clone im Volume kann sie nicht ändern. **Neue Hostnamen kommen per PR in `harness.toml`**, danach baut der Workflow ein neues Image. Ein Werkzeug, das einen anderen Hostnamen braucht (etwa `codeload.github.com` für Tarballs), scheitert bis dahin mit `403` vom Proxy.
+
+Beim Start prüft `firewall.sh`, dass jeder Hostname auflösbar ist, dass `example.com` gesperrt ist, dass `github.com` am Proxy vorbei gesperrt ist und dass `github.com` über den Proxy erreichbar ist. Scheitert etwas davon, startet der Container nicht.
 
 Restrisiken:
 
 - **DNS:** DNS-Anfragen gehen weiter hinaus. Das ist ein schmaler Kanal nach außen.
-- **Geteilte CDN-IPs, ein breiter Kanal:** `registry.npmjs.org` (Cloudflare) sowie `pypi.org` und `files.pythonhosted.org` (Fastly) teilen ihre IPs mit beliebigen fremden Seiten. Ein reingelegter Agent kann über eine erlaubte IP (`curl --resolve …`) unbemerkt und in voller Bandbreite an eine eigene Seite senden, auch das `setup-token`. Die Firewall begrenzt also IPs, nicht Hostnamen. Abhilfe schafft ein Egress-Proxy mit Hostname-Allowlist (#70).
-- **Wechselnde IPs:** Ändert ein Dienst während einer Session seine IPs, hilft ein Neustart des Containers (`docker stop agent-<name>`, dann `just agent …`).
+- **Domain Fronting:** Im verschlüsselten Teil einer erlaubten Verbindung könnte ein Agent im HTTP-Kopf `Host:` eine fremde Seite beim selben CDN nennen. Der Proxy sieht das nicht. Cloudflare (npm) und Fastly (PyPI) sollen solche Anfragen abweisen, geprüft ist das hier nicht. Bis zu #70 stand dieser Weg ohne jede Hürde offen (`curl --resolve`), jetzt hängt er davon ab, ob ein CDN fremde `Host`-Köpfe annimmt.
+- **GitHub:** Über GitHub selbst kann ein Agent weiter etwas nach außen schreiben (ADR 0005, Restrisiken).
 - **Abmelden:** Nach dem Abmelden gibt der Broker kein neues Token mehr aus. Ein schon geholtes Token gilt aber bis zu 1 h weiter. Sofort wirkt nur der Kill-Switch im [Broker-README](../broker/README.md#kill-switch).
 
 ## Skills

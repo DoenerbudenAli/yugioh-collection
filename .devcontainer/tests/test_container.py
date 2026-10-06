@@ -159,7 +159,7 @@ def test_claude_laeuft_ohne_rueckfragen(container: str) -> None:
 def test_kaputte_allowlist_startet_nicht(image: str, tmp_path: Path, domains: str, meldung: str) -> None:
     netz = tmp_path / "netz.env"
     netz.write_text(
-        f'BROKER_PORT={KONFIG.broker_port}\nGITHUB_META="web api git"\nDOMAINS="{domains}"\n',
+        f'BROKER_PORT={KONFIG.broker_port}\nDOMAINS="{domains}"\n',
         encoding="utf-8",
         newline="\n",
     )
@@ -196,95 +196,75 @@ def test_claude_bietet_keinen_auto_mode_an(container: str) -> None:
     assert '"disableAutoMode": "disable"' in einstellungen
 
 
-# Fake für api.github.com/meta im Container: Status, Kopfzeilen und Körper kommen aus der Umgebung.
-FAKE_META = r"""
-import http.server, json, os
-class H(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(int(os.environ["FAKE_STATUS"]))
-        for name, wert in json.loads(os.environ.get("FAKE_KOPF", "{}")).items():
-            self.send_header(name, wert)
-        self.end_headers()
-        self.wfile.write(os.environ.get("FAKE_KOERPER", "").encode())
-    def log_message(self, *a): pass
-http.server.HTTPServer(("127.0.0.1", 8099), H).serve_forever()
+# Egress-Proxy (Ticket #70): Nach außen darf nur der Proxy, und der nur zu Hostnamen der Allowlist.
+PROXY_USER = "egress"  # eigener User des Proxys im Image, iptables lässt nur ihn hinaus
+CDN_NAME = "registry.npmjs.org"  # liegt bei einem CDN, dessen IPs sich viele fremde Seiten teilen
+CDN_IP = f"$(getent ahostsv4 {CDN_NAME} | awk 'NR==1 {{print $1}}')"
+
+
+@pytest.mark.parametrize("ohne_proxy", ["", "--noproxy '*'"], ids=["mit-proxy", "ohne-proxy"])
+def test_fremde_seite_ueber_cdn_ip_scheitert(container: str, ohne_proxy: str) -> None:
+    befehl = f"curl -sS --max-time 10 {ohne_proxy} --resolve example.com:443:{CDN_IP} https://example.com"
+    assert _als_agent(container, befehl).returncode != 0
+
+
+# Öffnet einen Tunnel zu einem erlaubten Namen und spricht darin TLS mit dem Namen aus argv[1] (SNI).
+SNI_PROBE = r"""
+import os, socket, ssl, sys
+port = os.environ["HTTPS_PROXY"].rsplit(":", 1)[1]
+s = socket.create_connection(("127.0.0.1", int(port)), timeout=10)
+s.sendall(b"CONNECT %s:443 HTTP/1.1
+
+" % sys.argv[2].encode())
+assert s.recv(4096).startswith(b"HTTP/1.1 200"), "Tunnel abgelehnt"
+k = ssl.create_default_context(); k.check_hostname = False; k.verify_mode = ssl.CERT_NONE
+k.wrap_socket(s, server_hostname=sys.argv[1]).close()
 """
 
 
-def _github_netze(image: str, schluessel: str, **fake: str) -> subprocess.CompletedProcess[str]:
-    """Führt github-netze.sh im Image gegen den Fake aus (so wie beim Bauen, ohne Token)."""
-    umgebung = [f"--env={name.upper()}={wert}" for name, wert in fake.items()]
-    skript = (
-        f"python3 -c '{FAKE_META}' & sleep 1; "
-        f"HARNESS_GITHUB_META_URL=http://127.0.0.1:8099/meta /opt/harness/github-netze.sh {schluessel}"
-    )
-    return _docker("run", "--rm", *umgebung, "--entrypoint", "bash", image, "-c", skript)
+def test_fremder_name_im_tunnel_zu_erlaubtem_namen_scheitert(container: str) -> None:
+    probe = f"python3 -c '{SNI_PROBE}'"
+    gegenprobe = _als_agent(container, f"{probe} {CDN_NAME} {CDN_NAME}")
+    assert gegenprobe.returncode == 0, gegenprobe.stderr
+    assert _als_agent(container, f"{probe} example.com {CDN_NAME}").returncode != 0
 
 
-def test_abfragelimit_von_github_wird_klar_gemeldet(image: str) -> None:
-    ergebnis = _github_netze(
-        image,
-        "web",
-        fake_status="403",
-        fake_kopf='{"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1791289200"}',
-    )
+@pytest.mark.parametrize("ziel", [f"https://{CDN_NAME}", "https://github.com"])
+def test_direkter_verkehr_am_proxy_vorbei_scheitert(container: str, ziel: str) -> None:
+    assert _als_agent(container, f"curl -sS --max-time 10 --noproxy '*' {ziel}").returncode != 0
+
+
+def test_proxy_weist_namen_ausserhalb_der_allowlist_ab(container: str) -> None:
+    ergebnis = _als_agent(container, "curl -sS --max-time 10 https://example.com")
     assert ergebnis.returncode != 0
-    assert "Abfragelimit" in ergebnis.stderr
-    assert "1791289200" not in ergebnis.stderr
+    assert "403" in ergebnis.stderr
 
 
-def test_github_netze_gibt_nur_ipv4_netze_der_schluessel_aus(image: str) -> None:
-    ergebnis = _github_netze(
-        image,
-        "web git",
-        fake_status="200",
-        fake_koerper=json.dumps(
-            {"web": ["192.0.2.0/24", "2001:db8::/32"], "git": ["198.51.100.0/24"], "actions": ["10.0.0.0/8"]}
-        ),
+def test_agent_kann_den_proxy_nicht_beenden(container: str) -> None:
+    pids = _als_agent(container, f"pgrep -u {PROXY_USER} -f devcontainer.proxy").stdout.split()
+    assert pids, f"kein Proxy-Prozess als {PROXY_USER}"
+    versuch = _als_agent(container, f"kill {' '.join(pids)}")
+    assert versuch.returncode != 0
+    assert "Operation not permitted" in versuch.stderr
+    assert (
+        _als_agent(container, "curl -sS --max-time 10 -o /dev/null https://api.github.com/zen").returncode
+        == 0
     )
+
+
+@pytest.mark.parametrize(
+    "befehl",
+    [
+        "cd $(mktemp -d) && uv init --bare --name probe && uv add iniconfig",
+        "cd $(mktemp -d) && pnpm init && pnpm add is-number",
+        "npm view is-number version",
+        f"git ls-remote https://github.com/{KONFIG.repository}.git HEAD",
+    ],
+    ids=["uv", "pnpm", "npm", "git"],
+)
+def test_werkzeuge_erreichen_die_echten_quellen_ueber_den_proxy(container: str, befehl: str) -> None:
+    ergebnis = _als_agent(container, befehl)
     assert ergebnis.returncode == 0, ergebnis.stderr
-    assert ergebnis.stdout.split() == ["192.0.2.0/24", "198.51.100.0/24"]
-
-
-def test_unbekannter_meta_schluessel_bricht_ab(image: str) -> None:
-    ergebnis = _github_netze(
-        image, "web gibtsnicht", fake_status="200", fake_koerper='{"web": ["192.0.2.0/24"]}'
-    )
-    assert ergebnis.returncode != 0
-    assert "gibtsnicht" in ergebnis.stderr
-
-
-def test_github_netze_liegen_im_image(image: str) -> None:
-    netze = _docker(
-        "run", "--rm", "--entrypoint", "cat", image, "/etc/harness/github-netze.txt"
-    ).stdout.split()
-    assert len(netze) > 5
-    assert all("/" in n and ":" not in n for n in netze)
-
-
-def test_start_braucht_keine_github_api(image: str) -> None:
-    # api.github.com zeigt ins Leere: Fragte der Start die API, endete der Container mit Fehler.
-    name = _starten(image, "--add-host=api.github.com:127.0.0.1")
-    try:
-        CliDocker().warte_bereit(name, BEREIT)
-        assert _als_agent(name, "curl -sS --max-time 5 https://example.com").returncode != 0
-    finally:
-        _docker("rm", "--force", name)
-
-
-def test_ohne_github_netze_startet_der_container_nicht(image: str, tmp_path: Path) -> None:
-    leer = tmp_path / "github-netze.txt"
-    leer.write_text("", encoding="utf-8")
-    name = _starten(image, f"--volume={leer}:/etc/harness/github-netze.txt:ro")
-    try:
-        ende = time.monotonic() + 60
-        while _docker("inspect", "--format", "{{.State.Running}}", name).stdout.strip() == "true":
-            assert time.monotonic() < ende, "Container läuft ohne GitHub-Netze"
-            time.sleep(1)
-        log = _docker("logs", name)
-        assert "keine GitHub-Netze" in log.stdout + log.stderr
-    finally:
-        _docker("rm", "--force", name)
 
 
 def _skills_holen(image: str, zeile: str) -> subprocess.CompletedProcess[str]:

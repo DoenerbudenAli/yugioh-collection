@@ -16,7 +16,6 @@ ARBEIT = "/arbeit"
 
 # Nur Zeichen, die in einem Hostnamen vorkommen. Die Werte landen in einer Datei, die Bash einliest.
 _DOMAIN = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$")
-_WORT = re.compile(r"^[a-z0-9_]+$")
 # Die Felder einer Skill-Sammlung landen in einer Datei, die das Bau-Skript zeilenweise einliest.
 _SAMMLUNG_MUSTER = {
     "plugin": re.compile(r"^[a-z0-9][a-z0-9-]*$"),
@@ -43,7 +42,6 @@ class Konfig:
     rollen: tuple[str, ...]
     app_slug: str
     bot_user_id: int
-    github_meta: tuple[str, ...]
     domains: tuple[str, ...]
     skills: tuple[Sammlung, ...]
 
@@ -83,7 +81,6 @@ def lade_konfig(pfad: Path) -> Konfig:
         rollen=tuple(broker["rollen"]),
         app_slug=str(app["slug"]),
         bot_user_id=int(app["bot_user_id"]),
-        github_meta=tuple(str(s) for s in netz["github_meta"]),
         domains=tuple(str(d) for d in netz["domains"]),
         skills=tuple(
             Sammlung(
@@ -98,18 +95,11 @@ def lade_konfig(pfad: Path) -> Konfig:
 
 
 def netz_env(k: Konfig) -> str:
-    """Die Allowlist als Datei für `firewall.sh` (Shell-Variablen)."""
+    """Die Allowlist als Datei für `einstieg.sh` und `firewall.sh` (Shell-Variablen)."""
     for domain in k.domains:
         if not _DOMAIN.match(domain):
             raise ValueError(f"Domain ungültig: {domain!r}")
-    for schluessel in k.github_meta:
-        if not _WORT.match(schluessel):
-            raise ValueError(f"github_meta ungültig: {schluessel!r}")
-    return (
-        f"BROKER_PORT={k.broker_port}\n"
-        f'GITHUB_META="{" ".join(k.github_meta)}"\n'
-        f'DOMAINS="{" ".join(k.domains)}"\n'
-    )
+    return f'BROKER_PORT={k.broker_port}\nDOMAINS="{" ".join(k.domains)}"\n'
 
 
 def skills_liste(k: Konfig) -> str:
