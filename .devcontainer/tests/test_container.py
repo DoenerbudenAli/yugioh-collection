@@ -6,6 +6,7 @@ Lokal gebaute Images dienen nur diesen Tests, Sessions laufen immer aus GHCR.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -25,7 +26,7 @@ pytestmark = [
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KONFIG = lade_konfig(REPO_ROOT / "harness.toml")
-KLON = f"/arbeit/{KONFIG.repo_name}"
+KLON = KONFIG.klon
 BEREIT = "/run/harness/bereit"
 
 
@@ -292,38 +293,31 @@ def _skills_holen(image: str, zeile: str) -> subprocess.CompletedProcess[str]:
     return _docker("run", "--rm", "--entrypoint", "bash", image, "-c", skript)
 
 
-def test_skill_version_die_es_nicht_gibt_bricht_den_bau_ab(image: str) -> None:
-    s = KONFIG.skills[0]
+# Je Sammlung aus harness.toml; ohne Sammlung überspringt pytest diese Tests.
+JE_SAMMLUNG = pytest.mark.parametrize("s", KONFIG.skills, ids=lambda s: s.plugin)
+
+
+@JE_SAMMLUNG
+def test_skill_version_die_es_nicht_gibt_bricht_den_bau_ab(image: str, s: Sammlung) -> None:
     ergebnis = _skills_holen(image, f"{s.plugin} {s.github} v0.0.0-gibtsnicht {s.commit}")
     assert ergebnis.returncode != 0
     assert f"Version v0.0.0-gibtsnicht gibt es in {s.github} nicht" in ergebnis.stderr
 
 
-def test_skill_tag_auf_anderem_commit_bricht_den_bau_ab(image: str) -> None:
-    sammlung = KONFIG.skills[0]
-    ergebnis = _skills_holen(image, f"{sammlung.plugin} {sammlung.github} {sammlung.version} {'0' * 40}")
+@JE_SAMMLUNG
+def test_skill_tag_auf_anderem_commit_bricht_den_bau_ab(image: str, s: Sammlung) -> None:
+    ergebnis = _skills_holen(image, f"{s.plugin} {s.github} {s.version} {'0' * 40}")
     assert ergebnis.returncode != 0
-    assert f"{sammlung.version} zeigt auf {sammlung.commit}" in ergebnis.stderr
+    assert f"{s.version} zeigt auf {s.commit}" in ergebnis.stderr
 
 
-@pytest.mark.parametrize("sammlung", KONFIG.skills, ids=lambda s: s.plugin)
-def test_skill_sammlungen_sind_installiert(container: str, sammlung: Sammlung) -> None:
+@JE_SAMMLUNG
+def test_skill_sammlungen_sind_installiert_und_bringen_skills_mit(container: str, s: Sammlung) -> None:
     liste = _als_agent(container, "claude plugin list").stdout
-    assert f"❯ {sammlung.plugin}@" in liste
+    assert f"❯ {s.plugin}@" in liste
     assert "✔ enabled" in liste
-
-
-@pytest.mark.parametrize("skill", ["tdd", "wayfinder"])
-def test_skills_aus_den_bau_tickets_sind_da(container: str, skill: str) -> None:
-    details = _als_agent(container, f"claude plugin details {KONFIG.skills[0].plugin}").stdout
-    assert skill in details
-
-
-def test_agent_kann_die_skills_nicht_aendern(container: str) -> None:
-    ordner = f"/opt/harness/skills/{KONFIG.skills[0].plugin}"
-    assert _als_agent(container, f"test -d {ordner}/skills").returncode == 0
-    assert _als_agent(container, f"touch {ordner}/x").returncode != 0
-    assert _als_agent(container, f"touch {ordner}/skills/x").returncode != 0
+    details = _als_agent(container, f"claude plugin details {s.plugin}").stdout
+    assert re.search(r"Skills \([1-9]\d*\)", details), details
 
 
 def test_claude_vertraut_dem_clone(container: str) -> None:

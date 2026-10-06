@@ -54,15 +54,15 @@ Restrisiken:
 
 ## Skills
 
-Agenten im Container haben nur die Skill-Sammlungen aus `harness.toml`, in fester Version ([ADR 0005](../docs/adr/0005-agenten-isolation.md), „Selbstschutz“). Die Plugins des Owners auf dem Host kommen bewusst nicht hinein. Derzeit:
+Agenten im Container haben nur die Skill-Sammlungen aus `[[devcontainer.skills]]` in `harness.toml`, in fester Version ([ADR 0005](../docs/adr/0005-agenten-isolation.md), „Selbstschutz“). Dort stehen auch Version und Commit. Die Plugins des Owners auf dem Host kommen bewusst nicht hinein. Derzeit:
 
-| Sammlung | Version | Inhalt (Auswahl) |
-|---|---|---|
-| [`mattpocock-skills`](https://github.com/mattpocock/skills) (MIT) | `v1.2.3` | `implement`, `tdd`, `code-review`, `to-spec`, `to-tickets`, `grilling`, `domain-modeling`, `wayfinder`, `wizard` |
+| Sammlung | Inhalt (Auswahl) |
+|---|---|
+| [`mattpocock-skills`](https://github.com/mattpocock/skills) (MIT) | `implement`, `tdd`, `code-review`, `to-spec`, `to-tickets`, `grilling`, `domain-modeling`, `wayfinder`, `wizard` |
 
 `superpowers` fehlt mit Absicht: Es überschneidet sich mit diesen Skills und erzwingt per Hook einen eigenen Ablauf.
 
-Beim Bauen holt `skills-holen.sh` jede Sammlung von GitHub und prüft, ob der Tag (`version`) auf den Commit (`commit`) zeigt. Gibt es den Tag nicht oder zeigt er woanders hin, bricht der Bau mit Meldung ab. Die Quellen liegen root-eigen in `/opt/harness/skills/<plugin>`. `skills-installieren.sh` installiert sie als User `agent` per `claude plugin install`, und Claude liest sie von dort. Im Container zeigt `claude plugin list` den Stand.
+Beim Bauen holt `skills-holen.sh` jede Sammlung von GitHub nach `/opt/harness/skills/<plugin>` und prüft, ob der Tag (`version`) auf den Commit (`commit`) zeigt. Gibt es den Tag nicht oder zeigt er woanders hin, bricht der Bau mit Meldung ab. `skills-installieren.sh` installiert sie danach als User `agent` per `claude plugin install`. Claude lädt sie aus seiner Kopie unter `~/.claude/plugins/cache`. Die gehört `agent`: Ein Agent kann seine Skills also im eigenen Container ändern, aber nicht im Image. Jeder neue Container startet wieder mit dem Stand aus `main`. Im Container zeigt `claude plugin list` den Stand.
 
 **Aktualisieren oder neue Sammlung:** per PR auf `harness.toml`. Den Commit zu einem Tag zeigt
 

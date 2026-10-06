@@ -17,6 +17,7 @@ while read -r plugin github version commit; do
         || fehler "$url nicht abrufbar (Sammlung $plugin)"
     [ -n "$refs" ] || fehler "Version $version gibt es in $github nicht (harness.toml, Sammlung $plugin)"
     # Ein annotierter Tag hat eine zweite Zeile „…^{}“ mit seinem Commit, ein einfacher Tag nur eine.
+    # ls-remote sortiert nach Ref, die Zeile „…^{}“ steht also immer zuletzt.
     ist=$(awk '{print $1}' <<<"$refs" | tail -n 1)
     [ "$ist" = "$commit" ] \
         || fehler "$github $version zeigt auf $ist, harness.toml erwartet $commit (Sammlung $plugin)"

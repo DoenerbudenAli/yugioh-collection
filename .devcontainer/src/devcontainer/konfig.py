@@ -18,7 +18,7 @@ ARBEIT = "/arbeit"
 _DOMAIN = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$")
 _WORT = re.compile(r"^[a-z0-9_]+$")
 # Die Felder einer Skill-Sammlung landen in einer Datei, die das Bau-Skript zeilenweise einliest.
-_SAMMLUNG = {
+_SAMMLUNG_MUSTER = {
     "plugin": re.compile(r"^[a-z0-9][a-z0-9-]*$"),
     "github": re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9._-]*$"),
     "version": re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$"),
@@ -117,7 +117,7 @@ def skills_liste(k: Konfig) -> str:
     zeilen: list[str] = []
     for sammlung in k.skills:
         werte: list[str] = []
-        for feld, muster in _SAMMLUNG.items():
+        for feld, muster in _SAMMLUNG_MUSTER.items():
             wert: str = getattr(sammlung, feld)
             if not muster.match(wert):
                 raise ValueError(f"Skill-Sammlung {sammlung.plugin!r}: {feld} ungültig: {wert!r}")

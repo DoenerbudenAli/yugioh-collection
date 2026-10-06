@@ -79,7 +79,7 @@ def test_echte_harness_toml_laesst_sich_laden() -> None:
     assert konfig.domains
     assert konfig.github_meta
     assert konfig.image.startswith("ghcr.io/")
-    assert skills_liste(konfig)
+    skills_liste(konfig)  # wirft bei unsicheren Werten
 
 
 def test_skill_sammlungen_mit_fester_version(konfig: Konfig) -> None:
