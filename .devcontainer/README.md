@@ -27,7 +27,8 @@ Einrichtung und Abnahme auf einem neuen Rechner: `& "C:\Program Files\Git\bin\ba
 | User | `agent` ohne sudo, ohne Capabilities, ohne Docker |
 | git, gh | Credential-Helper `git-credential-broker` und Wrapper `/usr/local/bin/gh` holen das Token beim Broker. Es liegt bis 5 min vor Ablauf in `~/.cache/harness/token.json`. |
 | Commits | als `<app-slug>[bot]` mit dessen noreply-Adresse (aus `harness.toml`) |
-| Claude Code | `bypassPermissions` ist Standard, Telemetrie und Auto-Update sind aus |
+| Claude Code | `bypassPermissions` ist Standard, Telemetrie und Auto-Update sind aus. Dem Clone vertraut es ohne Rückfrage. |
+| Skills | die Sammlungen aus `[[devcontainer.skills]]` in `harness.toml` als Plugins, siehe [Skills](#skills) |
 
 `einstieg.sh` läuft beim Start als root. Er setzt die Firewall (`firewall.sh`), prüft sie und wechselt dann endgültig zu `agent`. Scheitert die Firewall oder ihr Selbsttest, endet der Container mit Fehler. `docker logs agent-<name>` zeigt warum.
 
@@ -50,6 +51,26 @@ Restrisiken:
 - **Geteilte CDN-IPs, ein breiter Kanal:** `registry.npmjs.org` (Cloudflare) sowie `pypi.org` und `files.pythonhosted.org` (Fastly) teilen ihre IPs mit beliebigen fremden Seiten. Ein reingelegter Agent kann über eine erlaubte IP (`curl --resolve …`) unbemerkt und in voller Bandbreite an eine eigene Seite senden, auch das `setup-token`. Die Firewall begrenzt also IPs, nicht Hostnamen. Abhilfe schafft ein Egress-Proxy mit Hostname-Allowlist (#70).
 - **Wechselnde IPs:** Ändert ein Dienst während einer Session seine IPs, hilft ein Neustart des Containers (`docker stop agent-<name>`, dann `just agent …`).
 - **Abmelden:** Nach dem Abmelden gibt der Broker kein neues Token mehr aus. Ein schon geholtes Token gilt aber bis zu 1 h weiter. Sofort wirkt nur der Kill-Switch im [Broker-README](../broker/README.md#kill-switch).
+
+## Skills
+
+Agenten im Container haben nur die Skill-Sammlungen aus `[[devcontainer.skills]]` in `harness.toml`, in fester Version ([ADR 0005](../docs/adr/0005-agenten-isolation.md), „Selbstschutz“). Dort stehen auch Version und Commit. Die Plugins des Owners auf dem Host kommen bewusst nicht hinein. Derzeit:
+
+| Sammlung | Inhalt (Auswahl) |
+|---|---|
+| [`mattpocock-skills`](https://github.com/mattpocock/skills) (MIT) | `implement`, `tdd`, `code-review`, `to-spec`, `to-tickets`, `grilling`, `domain-modeling`, `wayfinder`, `wizard` |
+
+`superpowers` fehlt mit Absicht: Es überschneidet sich mit diesen Skills und erzwingt per Hook einen eigenen Ablauf.
+
+Beim Bauen holt `skills-holen.sh` jede Sammlung von GitHub nach `/opt/harness/skills/<plugin>` und prüft, ob der Tag (`version`) auf den Commit (`commit`) zeigt. Gibt es den Tag nicht oder zeigt er woanders hin, bricht der Bau mit Meldung ab. `skills-installieren.sh` installiert sie danach als User `agent` per `claude plugin install`. Claude lädt sie aus seiner Kopie unter `~/.claude/plugins/cache`. Die gehört `agent`: Ein Agent kann seine Skills also im eigenen Container ändern, aber nicht im Image. Jeder neue Container startet wieder mit dem Stand aus `main`. Im Container zeigt `claude plugin list` den Stand.
+
+**Aktualisieren oder neue Sammlung:** per PR auf `harness.toml`. Den Commit zu einem Tag zeigt
+
+```bash
+git ls-remote https://github.com/<owner>/<repo>.git 'refs/tags/<tag>^{}'
+```
+
+(bei einem einfachen Tag ohne `^{}`). Eine Sammlung muss ein Claude-Code-Marketplace sein (`.claude-plugin/marketplace.json`). Nach dem Merge baut der Workflow ein neues Image. Laufende Container behalten ihren Stand, erst ein neuer Container (`just weg`, dann `just agent`) hat die neuen Skills.
 
 ## Image
 

@@ -6,6 +6,7 @@ Lokal gebaute Images dienen nur diesen Tests, Sessions laufen immer aus GHCR.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -16,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from devcontainer.agent import CliDocker
-from devcontainer.konfig import lade_konfig
+from devcontainer.konfig import Sammlung, lade_konfig
 
 pytestmark = [
     pytest.mark.container,
@@ -25,12 +26,14 @@ pytestmark = [
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KONFIG = lade_konfig(REPO_ROOT / "harness.toml")
-KLON = f"/arbeit/{KONFIG.repo_name}"
+KLON = KONFIG.klon
 BEREIT = "/run/harness/bereit"
 
 
 def _docker(*argv: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["docker", *argv], capture_output=True, text=True, check=False)
+    return subprocess.run(
+        ["docker", *argv], capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+    )
 
 
 @pytest.fixture(scope="session")
@@ -282,3 +285,41 @@ def test_ohne_github_netze_startet_der_container_nicht(image: str, tmp_path: Pat
         assert "keine GitHub-Netze" in log.stdout + log.stderr
     finally:
         _docker("rm", "--force", name)
+
+
+def _skills_holen(image: str, zeile: str) -> subprocess.CompletedProcess[str]:
+    """Führt skills-holen.sh im Image mit einer Zeile aus `skills-liste` aus (so wie beim Bauen)."""
+    skript = f"echo '{zeile}' | /opt/harness/skills-holen.sh /tmp/skills"
+    return _docker("run", "--rm", "--entrypoint", "bash", image, "-c", skript)
+
+
+# Je Sammlung aus harness.toml; ohne Sammlung überspringt pytest diese Tests.
+JE_SAMMLUNG = pytest.mark.parametrize("s", KONFIG.skills, ids=lambda s: s.plugin)
+
+
+@JE_SAMMLUNG
+def test_skill_version_die_es_nicht_gibt_bricht_den_bau_ab(image: str, s: Sammlung) -> None:
+    ergebnis = _skills_holen(image, f"{s.plugin} {s.github} v0.0.0-gibtsnicht {s.commit}")
+    assert ergebnis.returncode != 0
+    assert f"Version v0.0.0-gibtsnicht gibt es in {s.github} nicht" in ergebnis.stderr
+
+
+@JE_SAMMLUNG
+def test_skill_tag_auf_anderem_commit_bricht_den_bau_ab(image: str, s: Sammlung) -> None:
+    ergebnis = _skills_holen(image, f"{s.plugin} {s.github} {s.version} {'0' * 40}")
+    assert ergebnis.returncode != 0
+    assert f"{s.version} zeigt auf {s.commit}" in ergebnis.stderr
+
+
+@JE_SAMMLUNG
+def test_skill_sammlungen_sind_installiert_und_bringen_skills_mit(container: str, s: Sammlung) -> None:
+    liste = _als_agent(container, "claude plugin list").stdout
+    assert f"❯ {s.plugin}@" in liste
+    assert "✔ enabled" in liste
+    details = _als_agent(container, f"claude plugin details {s.plugin}").stdout
+    assert re.search(r"Skills \([1-9]\d*\)", details), details
+
+
+def test_claude_vertraut_dem_clone(container: str) -> None:
+    daten = json.loads(_als_agent(container, "cat ~/.claude.json").stdout)
+    assert daten["projects"][KLON]["hasTrustDialogAccepted"] is True

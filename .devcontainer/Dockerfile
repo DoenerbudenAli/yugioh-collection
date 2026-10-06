@@ -34,7 +34,7 @@ COPY .devcontainer/src /opt/harness/src
 # Wrapper in /usr/local/bin: Das steht auch in Login-Shells vor /usr/bin.
 COPY --chmod=0755 .devcontainer/bin/ /usr/local/bin/
 COPY --chmod=0755 .devcontainer/einstieg.sh .devcontainer/firewall.sh .devcontainer/als-agent.sh \
-    .devcontainer/github-netze.sh /opt/harness/
+    .devcontainer/github-netze.sh .devcontainer/skills-holen.sh .devcontainer/skills-installieren.sh /opt/harness/
 COPY harness.toml /opt/harness/harness.toml
 
 # Die Allowlist kommt aus dem harness.toml dieses Builds (main), nicht aus dem Clone im Volume.
@@ -50,7 +50,21 @@ RUN --mount=type=secret,id=github_token,required=false \
     && /opt/harness/github-netze.sh $GITHUB_META > /etc/harness/github-netze.txt
 
 COPY --chown=agent:agent .devcontainer/claude-settings.json /home/agent/.claude/settings.json
-COPY --chown=agent:agent .devcontainer/claude.json /home/agent/.claude.json
+# Grundwerte plus Vertrauen in den Clone /arbeit/<repo>: Claude fragt beim ersten Start nicht nach.
+COPY .devcontainer/claude.json /opt/harness/claude.json
+RUN PYTHONPATH=/opt/harness/src python3 -m devcontainer.konfig claude-json /opt/harness/harness.toml \
+        /opt/harness/claude.json > /home/agent/.claude.json \
+    && chown agent:agent /home/agent/.claude.json
+
+# Skill-Sammlungen aus harness.toml (ADR 0005, „Selbstschutz“): beim Bauen von GitHub holen, Tag gegen Commit
+# prüfen, als Plugins für agent installieren. Die Quellen gehören root, Claude liest sie von dort.
+RUN PYTHONPATH=/opt/harness/src python3 -m devcontainer.konfig skills-liste /opt/harness/harness.toml \
+        > /etc/harness/skills.txt \
+    && /opt/harness/skills-holen.sh /opt/harness/skills < /etc/harness/skills.txt
+USER agent
+RUN CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1 \
+    /opt/harness/skills-installieren.sh /opt/harness/skills < /etc/harness/skills.txt
+USER root
 
 ENV GIT_TERMINAL_PROMPT=0 \
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
