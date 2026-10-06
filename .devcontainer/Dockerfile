@@ -33,7 +33,8 @@ RUN userdel --remove node \
 COPY .devcontainer/src /opt/harness/src
 # Wrapper in /usr/local/bin: Das steht auch in Login-Shells vor /usr/bin.
 COPY --chmod=0755 .devcontainer/bin/ /usr/local/bin/
-COPY --chmod=0755 .devcontainer/einstieg.sh .devcontainer/firewall.sh .devcontainer/als-agent.sh /opt/harness/
+COPY --chmod=0755 .devcontainer/einstieg.sh .devcontainer/firewall.sh .devcontainer/als-agent.sh \
+    .devcontainer/github-netze.sh /opt/harness/
 COPY harness.toml /opt/harness/harness.toml
 
 # Die Allowlist kommt aus dem harness.toml dieses Builds (main), nicht aus dem Clone im Volume.
@@ -41,6 +42,12 @@ RUN install -d /etc/harness \
     && PYTHONPATH=/opt/harness/src python3 -m devcontainer.konfig netz-env /opt/harness/harness.toml \
         > /etc/harness/netz.env \
     && git config --system credential.helper broker
+
+# GitHub-Netze einmal beim Bauen holen, damit kein Start die GitHub-API braucht (anonym 60/h je IP).
+# Die CI reicht ihr Token als Secret herein (höheres Limit); es landet in keiner Schicht des Images.
+RUN --mount=type=secret,id=github_token,required=false \
+    . /etc/harness/netz.env \
+    && /opt/harness/github-netze.sh $GITHUB_META > /etc/harness/github-netze.txt
 
 COPY --chown=agent:agent .devcontainer/claude-settings.json /home/agent/.claude/settings.json
 COPY --chown=agent:agent .devcontainer/claude.json /home/agent/.claude.json

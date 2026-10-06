@@ -1,6 +1,6 @@
 #!/bin/bash
-# Netz-Allowlist (ADR 0005, „Netz“): Default DROP, erlaubt sind GitHub (api.github.com/meta), die Domains
-# aus /etc/harness/netz.env (nur HTTPS) und der Broker auf seinem Port. Die IPs werden beim Start aufgelöst.
+# Netz-Allowlist (ADR 0005, „Netz“): Default DROP, erlaubt sind GitHub (Netze aus dem Image), die Domains
+# aus /etc/harness/netz.env (nur HTTPS) und der Broker auf seinem Port. Domains werden beim Start aufgelöst.
 set -euo pipefail
 
 # shellcheck source=/dev/null
@@ -11,12 +11,11 @@ fehler() { echo "firewall: $*" >&2; exit 1; }
 # 1. Erlaubte Adressen sammeln, solange das Netz noch offen ist.
 ipset destroy erlaubt 2>/dev/null || true
 ipset create erlaubt hash:net
-meta=$(curl -fsS --max-time 20 https://api.github.com/meta) || fehler "api.github.com/meta nicht abrufbar"
-for schluessel in $GITHUB_META; do
-    for netz in $(jq -r --arg s "$schluessel" '.[$s][]? | select(contains(":") | not)' <<<"$meta"); do
-        ipset add erlaubt "$netz" -exist
-    done
-done
+# GitHub-Netze stehen seit dem Bauen im Image (github-netze.sh): Der Start fragt die GitHub-API nicht.
+[ -s /etc/harness/github-netze.txt ] || fehler "keine GitHub-Netze im Image (/etc/harness/github-netze.txt leer)"
+while read -r netz; do
+    if [ -n "$netz" ]; then ipset add erlaubt "$netz" -exist; fi
+done </etc/harness/github-netze.txt
 for domain in $DOMAINS; do
     # getent endet mit 2, wenn es den Namen nicht gibt; die Meldung kommt dann von fehler().
     ips=$(getent ahostsv4 "$domain" | awk '{print $1}' | sort -u || true)
@@ -56,6 +55,7 @@ fi
 if curl -sS --max-time 5 -o /dev/null https://example.com 2>/dev/null; then
     fehler "Selbsttest fehlgeschlagen: example.com ist erreichbar"
 fi
-curl -fsS --max-time 10 -o /dev/null https://api.github.com/zen \
-    || fehler "Selbsttest fehlgeschlagen: api.github.com ist nicht erreichbar"
+# github.com statt der API: Jede HTTP-Antwort beweist die Verbindung und kostet kein Abfragelimit.
+curl -sS --max-time 10 -o /dev/null https://github.com \
+    || fehler "Selbsttest fehlgeschlagen: github.com ist nicht erreichbar"
 echo "firewall: Allowlist aktiv ($(ipset list erlaubt | grep -c '^[0-9]') Netze, Broker $broker_ip:$BROKER_PORT)"

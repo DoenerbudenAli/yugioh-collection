@@ -192,7 +192,8 @@ finish() {
 # Nur ausgewählte Stufen, z. B. nur die Abnahme:
 #   $env:STUFEN = '4 5 6 7'; & "C:\Program Files\Git\bin\bash.exe" .devcontainer/einrichten.sh; Remove-Item Env:STUFEN
 #
-# Für einen Probelauf lassen sich PY, TOKEN_DATEI, JUST_LINK und NAME überschreiben.
+# Für einen Probelauf lassen sich PY, TOKEN_DATEI, NAME, JUST (Pfad zu just) und ZWISCHENABLAGE_DATEI
+# (Datei statt der echten Zwischenablage) überschreiben.
 
 TOTAL_STAGES=7
 ENV_FILE="/nicht/vorhanden"   # Dieser Wizard schreibt keine .env.
@@ -209,7 +210,6 @@ NAME="${NAME:-probe}"
 CONTAINER="agent-$NAME"
 BRANCH="probe/devcontainer-30"
 TOKEN_DATEI="${TOKEN_DATEI:-$(cygpath -u "$USERPROFILE")/.config/harness/claude-setup-token}"
-JUST_LINK="${JUST_LINK:-$(cygpath -u "$LOCALAPPDATA")/Microsoft/WinGet/Links/just.exe}"
 BERICHT="$(cd "$REPO_WURZEL/.." && pwd)/devcontainer-abnahme.txt"
 
 ERGEBNISSE=()
@@ -228,22 +228,38 @@ docker() { MSYS_NO_PATHCONV=1 command docker "$@"; }
 im_container() { docker exec --user agent --workdir "/arbeit/$REPO_NAME" "$CONTAINER" bash -lc "$1"; }
 laeuft() { [[ "$(docker inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" == "true" ]]; }
 
+# just_pfad: wo ein NEUES PowerShell-Fenster just findet. Den PATH liest es frisch aus der Registry,
+# denn winget trägt den Paketordner dort ein (statt eines Links), und diese Shell kennt ihn noch nicht.
+just_pfad() {
+  if [[ -n "${JUST:-}" ]]; then printf '%s' "$JUST"; return; fi
+  local win
+  win="$(powershell.exe -NoProfile -Command '$env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User"); (Get-Command just -ErrorAction SilentlyContinue).Source' 2>/dev/null | tr -d '\r')"
+  [[ -n "$win" ]] && cygpath -u "$win"
+}
+just_version() { local j; j="$(just_pfad)" && [[ -n "$j" ]] && "$j" --version 2>/dev/null; }
+
+# zwischenablage: Text der Windows-Zwischenablage, alle Zeilen. Umgebrochene Tokens werden später zusammengefügt.
+zwischenablage() {
+  if [[ -n "${ZWISCHENABLAGE_DATEI:-}" ]]; then cat "$ZWISCHENABLAGE_DATEI"; return; fi
+  powershell.exe -NoProfile -Command Get-Clipboard 2>/dev/null || true
+}
+
 banner "Agenten-Container einrichten und abnehmen"
 
 # ── 1 ─────────────────────────────────────────────────────────────────────
 if nur 1; then
   stufe 1 "just installieren"
-  if "$JUST_LINK" --version >/dev/null 2>&1; then
-    ok "just ist schon da: $("$JUST_LINK" --version)"
+  if VERSION="$(just_version)"; then
+    ok "just ist schon da: $VERSION"
   else
     say "Der Wizard installiert just jetzt per winget, ohne Admin-Rechte."
     note "Fragt winget nach den Bedingungen einer Quelle: Y tippen, dann Enter."
     pause "Los mit Enter"
     winget.exe install --id Casey.Just --exact --source winget || true
-    if "$JUST_LINK" --version >/dev/null 2>&1; then
-      ok "just läuft: $("$JUST_LINK" --version)"
+    if VERSION="$(just_version)"; then
+      ok "just läuft: $VERSION"
     else
-      falsch "just startet nicht ($JUST_LINK). Blockt Smart App Control? Meldung an Claude schicken."
+      falsch "just ist nach der Installation nicht im PATH oder startet nicht. Meldung an Claude schicken."
     fi
   fi
   note "PowerShell-Fenster, die schon offen sind, kennen just erst nach einem Neustart des Fensters."
@@ -297,21 +313,30 @@ if nur 3; then
       say "    docker run --rm -it --entrypoint claude $IMAGE setup-token"
     fi
     step "Den angezeigten Link im Browser öffnen, mit deinem Claude-Konto anmelden, „Authorize“ klicken."
-    step "Das Fenster zeigt danach ein Token, das mit „sk-ant-oat“ beginnt. Markieren und kopieren."
-    say ""
-    ask_secret SETUP_TOKEN "Token hier einfügen (Rechtsklick), es bleibt unsichtbar, dann Enter:"
-    SETUP_TOKEN="${SETUP_TOKEN//[[:space:]]/}"
-    if [[ "$SETUP_TOKEN" != sk-ant-oat* ]]; then
-      falsch "Eingabe beginnt nicht mit sk-ant-oat (${#SETUP_TOKEN} Zeichen empfangen), nichts gespeichert"
-    else
-      mkdir -p "$(dirname "$TOKEN_DATEI")"
-      printf '%s\n' "$SETUP_TOKEN" >"$TOKEN_DATEI"
-      if MSYS_NO_PATHCONV=1 icacls "$(cygpath -w "$TOKEN_DATEI")" /inheritance:r /grant:r "${USERNAME}:F" >/dev/null; then
-        ok "setup-token gespeichert (${#SETUP_TOKEN} Zeichen), nur für $USERNAME lesbar"
+    step "Der Browser zeigt einen CODE. Den kopieren, im setup-token-Fenster mit Rechtsklick einfügen, Enter."
+    step "Erst jetzt zeigt das Fenster das TOKEN: lang, beginnt mit „sk-ant-oat01-“, oft über zwei Zeilen."
+    step "Das ganze Token mit der Maus markieren (vom „s“ bis zum letzten Zeichen) und mit Enter kopieren."
+    note "Nichts hier einfügen: Der Wizard liest das Token selbst aus der Zwischenablage. Abbrechen mit Strg+C."
+    while true; do
+      pause "Token kopiert? Dann hier Enter"
+      SETUP_TOKEN="$(zwischenablage | tr -d '[:space:]')"
+      [[ "$SETUP_TOKEN" == sk-ant-oat* ]] && break
+      if [[ -z "$SETUP_TOKEN" ]]; then
+        warn "Die Zwischenablage ist leer. Token markieren, Enter, dann noch einmal."
       else
-        falsch "Rechte der Token-Datei ließen sich nicht setzen"
+        warn "Kein Token in der Zwischenablage (beginnt mit „${SETUP_TOKEN:0:12}…“)."
+        note "Ist das der Code aus dem Browser? Der gehört ins setup-token-Fenster, das Token kommt danach."
       fi
+    done
+    mkdir -p "$(dirname "$TOKEN_DATEI")"
+    printf '%s\n' "$SETUP_TOKEN" >"$TOKEN_DATEI"
+    if MSYS_NO_PATHCONV=1 icacls "$(cygpath -w "$TOKEN_DATEI")" /inheritance:r /grant:r "${USERNAME}:F" >/dev/null; then
+      ok "setup-token gespeichert (${#SETUP_TOKEN} Zeichen, beginnt mit ${SETUP_TOKEN:0:14}), nur für $USERNAME lesbar"
+    else
+      falsch "Rechte der Token-Datei ließen sich nicht setzen"
     fi
+    # Das Token nicht in der Zwischenablage liegen lassen.
+    [[ -n "${ZWISCHENABLAGE_DATEI:-}" ]] || printf ' ' | clip.exe
     unset SETUP_TOKEN
   fi
   pause "Weiter mit Enter"
@@ -327,7 +352,8 @@ if nur 4; then
   note "Firewall und Clone brauchen beim ersten Start etwa eine halbe Minute."
   step "In Claude eintippen:  Sag kurz Hallo  und Enter. Claude muss antworten."
   step "Danach Claude mit  /exit  verlassen. Der Container läuft weiter."
-  note "Fragt Claude beim Start etwas (Theme, Bestätigung): Frage merken und Claude sagen."
+  note "Fragt Claude „Make auto mode your default …?“: „No, keep bypass permissions“ (Pfeil runter, Enter)."
+  note "Fragt Claude sonst etwas beim Start: Frage merken und Claude sagen."
   pause "Claude hat geantwortet und ist mit /exit beendet? Enter"
   if laeuft; then ok "$CONTAINER läuft"; else falsch "$CONTAINER läuft nicht"; fi
   pruefe "Clone im Volume" "$(im_container 'git rev-parse --is-inside-work-tree' 2>/dev/null)" true

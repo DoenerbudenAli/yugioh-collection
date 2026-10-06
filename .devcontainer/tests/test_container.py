@@ -4,6 +4,7 @@ Das Image kommt aus `HARNESS_TEST_IMAGE` (CI) oder wird hier als `harness-devcon
 Lokal gebaute Images dienen nur diesen Tests, Sessions laufen immer aus GHCR.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -88,7 +89,8 @@ def test_fremde_domain_ist_gesperrt(container: str) -> None:
 
 
 def test_github_ist_erreichbar(container: str) -> None:
-    ergebnis = _als_agent(container, "curl -fsS --max-time 10 https://api.github.com/zen")
+    # Ohne -f: Jede HTTP-Antwort beweist die Verbindung, auch ein 403 wegen des anonymen Abfragelimits.
+    ergebnis = _als_agent(container, "curl -sS --max-time 10 -o /dev/null https://api.github.com/zen")
     assert ergebnis.returncode == 0, ergebnis.stderr
 
 
@@ -178,6 +180,105 @@ def test_neustart_setzt_die_firewall_wieder(image: str) -> None:
         assert _docker("restart", name).returncode == 0
         CliDocker().warte_bereit(name, BEREIT)
         assert _als_agent(name, "curl -sS --max-time 5 https://example.com").returncode != 0
-        assert _als_agent(name, "curl -fsS --max-time 10 https://api.github.com/zen").returncode == 0
+        assert (
+            _als_agent(name, "curl -sS --max-time 10 -o /dev/null https://api.github.com/zen").returncode == 0
+        )
+    finally:
+        _docker("rm", "--force", name)
+
+
+def test_claude_bietet_keinen_auto_mode_an(container: str) -> None:
+    # Ohne diese Sperre fragt Claude beim ersten Start, ob Auto-Mode statt bypassPermissions Standard wird.
+    einstellungen = _als_agent(container, "cat ~/.claude/settings.json").stdout
+    assert '"disableAutoMode": "disable"' in einstellungen
+
+
+# Fake für api.github.com/meta im Container: Status, Kopfzeilen und Körper kommen aus der Umgebung.
+FAKE_META = r"""
+import http.server, json, os
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(int(os.environ["FAKE_STATUS"]))
+        for name, wert in json.loads(os.environ.get("FAKE_KOPF", "{}")).items():
+            self.send_header(name, wert)
+        self.end_headers()
+        self.wfile.write(os.environ.get("FAKE_KOERPER", "").encode())
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", 8099), H).serve_forever()
+"""
+
+
+def _github_netze(image: str, schluessel: str, **fake: str) -> subprocess.CompletedProcess[str]:
+    """Führt github-netze.sh im Image gegen den Fake aus (so wie beim Bauen, ohne Token)."""
+    umgebung = [f"--env={name.upper()}={wert}" for name, wert in fake.items()]
+    skript = (
+        f"python3 -c '{FAKE_META}' & sleep 1; "
+        f"HARNESS_GITHUB_META_URL=http://127.0.0.1:8099/meta /opt/harness/github-netze.sh {schluessel}"
+    )
+    return _docker("run", "--rm", *umgebung, "--entrypoint", "bash", image, "-c", skript)
+
+
+def test_abfragelimit_von_github_wird_klar_gemeldet(image: str) -> None:
+    ergebnis = _github_netze(
+        image,
+        "web",
+        fake_status="403",
+        fake_kopf='{"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1791289200"}',
+    )
+    assert ergebnis.returncode != 0
+    assert "Abfragelimit" in ergebnis.stderr
+    assert "1791289200" not in ergebnis.stderr
+
+
+def test_github_netze_gibt_nur_ipv4_netze_der_schluessel_aus(image: str) -> None:
+    ergebnis = _github_netze(
+        image,
+        "web git",
+        fake_status="200",
+        fake_koerper=json.dumps(
+            {"web": ["192.0.2.0/24", "2001:db8::/32"], "git": ["198.51.100.0/24"], "actions": ["10.0.0.0/8"]}
+        ),
+    )
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert ergebnis.stdout.split() == ["192.0.2.0/24", "198.51.100.0/24"]
+
+
+def test_unbekannter_meta_schluessel_bricht_ab(image: str) -> None:
+    ergebnis = _github_netze(
+        image, "web gibtsnicht", fake_status="200", fake_koerper='{"web": ["192.0.2.0/24"]}'
+    )
+    assert ergebnis.returncode != 0
+    assert "gibtsnicht" in ergebnis.stderr
+
+
+def test_github_netze_liegen_im_image(image: str) -> None:
+    netze = _docker(
+        "run", "--rm", "--entrypoint", "cat", image, "/etc/harness/github-netze.txt"
+    ).stdout.split()
+    assert len(netze) > 5
+    assert all("/" in n and ":" not in n for n in netze)
+
+
+def test_start_braucht_keine_github_api(image: str) -> None:
+    # api.github.com zeigt ins Leere: Fragte der Start die API, endete der Container mit Fehler.
+    name = _starten(image, "--add-host=api.github.com:127.0.0.1")
+    try:
+        CliDocker().warte_bereit(name, BEREIT)
+        assert _als_agent(name, "curl -sS --max-time 5 https://example.com").returncode != 0
+    finally:
+        _docker("rm", "--force", name)
+
+
+def test_ohne_github_netze_startet_der_container_nicht(image: str, tmp_path: Path) -> None:
+    leer = tmp_path / "github-netze.txt"
+    leer.write_text("", encoding="utf-8")
+    name = _starten(image, f"--volume={leer}:/etc/harness/github-netze.txt:ro")
+    try:
+        ende = time.monotonic() + 60
+        while _docker("inspect", "--format", "{{.State.Running}}", name).stdout.strip() == "true":
+            assert time.monotonic() < ende, "Container läuft ohne GitHub-Netze"
+            time.sleep(1)
+        log = _docker("logs", name)
+        assert "keine GitHub-Netze" in log.stdout + log.stderr
     finally:
         _docker("rm", "--force", name)
