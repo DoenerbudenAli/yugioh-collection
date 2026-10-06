@@ -31,9 +31,24 @@ Code und Python liegen außerhalb des Benutzerordners des Owners, denn dort kön
 
 ## Einrichten und aktualisieren
 
-Einrichten: `einrichten.sh` in Git Bash (`"C:\Program Files\Git\bin\bash.exe" broker/einrichten.sh`), nachdem der Broker auf `main` gemergt ist. Der Wizard führt durch Dienstkonto, Installation, Key-Import, Autostart und Abnahme.
+Einrichten, nachdem der Broker auf `main` gemergt ist, aus PowerShell im Repo-Ordner:
 
-Aktualisieren nach einem Merge auf `main`: im Wizard nur Stufe 3 (Code holen) ausführen, dann die Aufgabe neu starten (`Stop-ScheduledTask harness-broker; Start-ScheduledTask harness-broker` im Admin-Fenster).
+```powershell
+& "C:\Program Files\Git\bin\bash.exe" broker/einrichten.sh 29
+```
+
+Der Wizard führt durch Dienstkonto, Installation, Key-Import, Autostart und Abnahme. Admin-Schritte legt er als Block in die Zwischenablage, eingefügt wird er in ein Fenster `powershell -NoProfile` mit Admin-Rechten. Zwei Stolpersteine, die er abfängt:
+
+- `pip install --target` legt die Pakete über den TEMP-Ordner des Owners an, und die Dateien behalten beim Verschieben dessen Rechte: Das Dienstkonto könnte sie nicht lesen, der Owner-User sie beschreiben. Stufe 3 setzt die Rechte deshalb mit `icacls /reset` auf die von `Program Files` zurück und prüft, dass der Owner-User dort nicht schreiben kann.
+- Die Aufgabenplanung vergibt dem Dienstkonto das Recht „Anmelden als Batchauftrag“ (`SeBatchLogonRight`) nicht selbst. Ohne das Recht startet die Aufgabe still nicht (`LastTaskResult 267011`). Stufe 6 setzt es per `secedit`, Windows Home hat dafür keine Oberfläche.
+
+Aktualisieren nach einem Merge auf `main`: Admin-Fenster öffnen (Stufe 1), dann nur Stufe 3 ausführen und die Aufgabe neu starten:
+
+```powershell
+$env:STUFEN = '3'; & "C:\Program Files\Git\bin\bash.exe" broker/einrichten.sh; Remove-Item Env:STUFEN
+```
+
+Im Admin-Fenster danach `Stop-ScheduledTask harness-broker; Start-ScheduledTask harness-broker`.
 
 `requirements.txt` ist aus `uv.lock` erzeugt (`uv export --frozen --no-dev --no-emit-project --format requirements.txt -o requirements.txt`) und wird mit `--require-hashes` installiert. Nach jeder Änderung an den Abhängigkeiten neu erzeugen.
 
