@@ -25,6 +25,7 @@ pytestmark = [
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KONFIG = lade_konfig(REPO_ROOT / "harness.toml")
 KLON = f"/arbeit/{KONFIG.repo_name}"
+BEREIT = "/run/harness/bereit"
 
 
 def _docker(*argv: str) -> subprocess.CompletedProcess[str]:
@@ -57,7 +58,7 @@ def _starten(image: str, *extra: str) -> str:
     ergebnis = _docker(
         "run", "-d", "--name", name,
         "--cap-add=NET_ADMIN", "--cap-add=NET_RAW", "--security-opt=no-new-privileges",
-        "--add-host=host.docker.internal:host-gateway",
+        "--add-host=host.docker.internal:host-gateway", "--tmpfs=/run/harness:uid=1000,gid=1000,mode=0700",
         "--env", f"HARNESS_REPOSITORY={KONFIG.repository}",
         "--env", "HARNESS_SCHLUESSEL=test-schluessel-ohne-broker-0000",
         "--env", "HARNESS_ROLLE=bau",
@@ -72,7 +73,7 @@ def _starten(image: str, *extra: str) -> str:
 def container(image: str) -> Iterator[str]:
     name = _starten(image)
     try:
-        CliDocker().warte_bereit(name, f"{KLON}/.git")
+        CliDocker().warte_bereit(name, BEREIT)
         yield name
     finally:
         _docker("rm", "--force", name)
@@ -106,6 +107,10 @@ def test_agent_ist_nicht_root_und_kann_die_firewall_nicht_aendern(container: str
     assert _als_agent(container, "id -u").stdout.strip() != "0"
     assert _als_agent(container, "iptables -P OUTPUT ACCEPT").returncode != 0
     assert _als_agent(container, "curl -sS --max-time 5 https://example.com").returncode != 0
+
+
+def test_bereit_zeichen_liegt_auf_tmpfs(container: str) -> None:
+    assert _als_agent(container, "stat -f -c %T /run/harness").stdout.strip() == "tmpfs"
 
 
 def test_clone_liegt_im_arbeitsordner(container: str) -> None:
@@ -161,9 +166,9 @@ def test_kaputte_allowlist_startet_nicht(image: str, tmp_path: Path, domains: st
 def test_neustart_setzt_die_firewall_wieder(image: str) -> None:
     name = _starten(image)
     try:
-        CliDocker().warte_bereit(name, f"{KLON}/.git")
+        CliDocker().warte_bereit(name, BEREIT)
         assert _docker("restart", name).returncode == 0
-        CliDocker().warte_bereit(name, f"{KLON}/.git")
+        CliDocker().warte_bereit(name, BEREIT)
         assert _als_agent(name, "curl -sS --max-time 5 https://example.com").returncode != 0
         assert _als_agent(name, "curl -fsS --max-time 10 https://api.github.com/zen").returncode == 0
     finally:

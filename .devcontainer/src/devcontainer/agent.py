@@ -25,6 +25,10 @@ Zustand = Literal["fehlt", "gestoppt", "laeuft"]
 
 ANMELDEDAUER = 24 * 3600
 ARBEIT = "/arbeit"
+# Bereit-Zeichen: entsteht erst, wenn Firewall und Clone stehen. Es liegt auf tmpfs, damit es nach einem
+# Neustart fehlt, bis die Firewall wieder gesetzt ist. uid 1000 ist der User agent im Image.
+BEREIT = "/run/harness/bereit"
+BEREIT_TMPFS = "--tmpfs=/run/harness:uid=1000,gid=1000,mode=0700"
 BEREIT_WARTEN = 180.0
 _NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 ADMIN_GEHEIMNIS_STANDARD = Path(r"C:\ProgramData\harness-broker\admin-geheimnis")
@@ -143,9 +147,8 @@ def start(u: Umgebung, rolle: str, name: str) -> int:
             u.ausgabe(f"Starte {container} neu")
             u.docker.start(container)
 
-    arbeitsordner = f"{ARBEIT}/{u.konfig.repo_name}"
-    u.docker.warte_bereit(container, f"{arbeitsordner}/.git")
-    return u.docker.exec_claude(container, arbeitsordner, token)
+    u.docker.warte_bereit(container, BEREIT)
+    return u.docker.exec_claude(container, f"{ARBEIT}/{u.konfig.repo_name}", token)
 
 
 def weg(u: Umgebung, name: str) -> int:
@@ -220,7 +223,7 @@ class CliDocker:
         argv = [
             "docker", "run", "-d", "--name", name, "--hostname", name,
             "--cap-add=NET_ADMIN", "--cap-add=NET_RAW", "--security-opt=no-new-privileges",
-            f"--volume={name}:{ARBEIT}",
+            f"--volume={name}:{ARBEIT}", BEREIT_TMPFS,
         ]  # fmt: skip
         for schluessel in env:
             argv += ["--env", schluessel]

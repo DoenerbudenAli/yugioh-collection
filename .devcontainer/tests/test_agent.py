@@ -112,7 +112,7 @@ def test_neu_meldet_an_und_startet_den_container(
         "GIT_AUTHOR_EMAIL": "42+beispiel-app[bot]@users.noreply.github.com",
         "GIT_COMMITTER_EMAIL": "42+beispiel-app[bot]@users.noreply.github.com",
     }
-    assert docker.aufrufe[3] == ("warte_bereit", "agent-probe", "/arbeit/Repo/.git")
+    assert docker.aufrufe[3] == ("warte_bereit", "agent-probe", "/run/harness/bereit")
     assert docker.aufrufe[4] == ("exec_claude", "agent-probe", "/arbeit/Repo", TOKEN)
 
 
@@ -280,6 +280,8 @@ def test_run_gibt_geheimnisse_nur_ueber_die_umgebung_weiter() -> None:
     for teil in ("--cap-add=NET_ADMIN", "--cap-add=NET_RAW", "--security-opt=no-new-privileges"):
         assert teil in aufruf.argv
     assert "--volume=agent-probe:/arbeit" in aufruf.argv
+    # Bereit-Zeichen auf tmpfs: Nach einem Neustart ist es weg, bis Firewall und Clone wieder stehen.
+    assert "--tmpfs=/run/harness:uid=1000,gid=1000,mode=0700" in aufruf.argv
     assert aufruf.argv[-1] == "img"
     assert not any("geheim-schluessel" in a for a in aufruf.argv)
     assert aufruf.argv[aufruf.argv.index("--env") :][:2] == ["--env", "HARNESS_SCHLUESSEL"]

@@ -31,6 +31,8 @@ Einrichtung und Abnahme auf einem neuen Rechner: `& "C:\Program Files\Git\bin\ba
 
 `einstieg.sh` läuft beim Start als root. Er setzt die Firewall (`firewall.sh`), prüft sie und wechselt dann endgültig zu `agent`. Scheitert die Firewall oder ihr Selbsttest, endet der Container mit Fehler. `docker logs agent-<name>` zeigt warum.
 
+Erst wenn Firewall und Clone stehen, entsteht `/run/harness/bereit`, und erst danach öffnet `just agent` Claude. Das Verzeichnis ist ein tmpfs (`docker run --tmpfs`). So überlebt das Zeichen keinen Neustart, und das Netz ist in den Sekunden bis zur neuen Firewall nicht offen.
+
 ## Netz
 
 Standard ist DROP. Erlaubt sind:

@@ -8,6 +8,7 @@ if [ ! -d "$ziel/.git" ]; then
     git clone "https://github.com/${HARNESS_REPOSITORY}.git" "$ziel.tmp"
     mv -- "$ziel.tmp" "$ziel"
 fi
+touch /run/harness/bereit
 echo "bereit: $ziel"
 
 trap 'exit 0' TERM INT
