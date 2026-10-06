@@ -15,10 +15,10 @@ Jede Agenten-Session zu diesem Repo läuft in einem **Devcontainer unter Docker 
 - **Netz:** Default DROP per iptables, erlaubt sind nur die Domains einer versionierten Allowlist (Anthropic-API, GitHub, Paketquellen, Broker). Neue Domains kommen per PR.
 - **Claude-Zugang:** `claude setup-token` per Env-Variable. Es kann weniger als ein voller Login und lässt sich einzeln widerrufen. Remote Control braucht einen vollen Login und entfällt deshalb.
 - **Berechtigungsmodus:** `bypassPermissions` ist im Container erlaubt, außerhalb nie. Deny-Regeln und der `PreToolUse`-Guard für Tests und Harness gelten weiter, als Leitplanke.
-- **Bedienung:** aus der Desktop-App über eine SSH-Umgebung (sshd im Container, nur `127.0.0.1`), als Rückfall die CLI per `docker exec`.
+- **Bedienung:** die CLI per `docker exec`, gestartet mit `just agent <rolle> <name>` aus PowerShell. Eine SSH-Umgebung der Desktop-App entfällt: Sie reicht die Claude-Anmeldung und die Connectors des Hosts in den Container (Spike #26).
 - **Selbstschutz:** Image, Allowlist und Broker werden immer aus `origin/main` gebaut, nie aus dem Arbeitsstand eines Agenten. Diese Pfade sind Kern, eine Sandbox kann sich also nicht selbst lockern.
 - **Host:** Auf dem Host liegen keine GitHub-Credentials, weder ein `gh`-Login noch Einträge des Git Credential Managers. Der Owner reviewt, approvt, merged und ändert Einstellungen im Browser. Sein lokaler Clone holt anonym und ist nur zum Lesen da. Local-Sessions für andere Projekte bleiben erlaubt, weil dort nichts mehr zu holen ist.
-- **Eigene Änderungen des Owners:** Standard ist github.dev im Browser, Commit und PR laufen unter dem Owner. Für längere Arbeit lokal kommt ein SSH-Schlüssel `ed25519-sk` auf einem externen FIDO2-Key dazu, der bei jedem Push eine Berührung verlangt. Ein Agent kann so einen Push anstoßen, aber nicht ohne den Owner abschließen. Codespaces nur ohne Agenten darin, denn dort arbeitet jeder Agent mit dem Token des Owners.
+- **Eigene Änderungen des Owners:** github.dev im Browser, Commit und PR laufen unter dem Owner. Lokal pusht der Owner nicht. Codespaces nur ohne Agenten darin, denn dort arbeitet jeder Agent mit dem Token des Owners.
 - **Kill-Switch:** Broker stoppen, App-Installation sperren, `setup-token` widerrufen.
 
 ## Restrisiken
@@ -37,5 +37,5 @@ Jede Agenten-Session zu diesem Repo läuft in einem **Devcontainer unter Docker 
 - **Token einmal pro Session:** Lange Sessions brächen nach 1 h ab. Eine regelmäßig erneuerte Token-Datei hängt an einem Timer, der still ausfallen kann.
 - **Key per DPAPI unter dem Owner-User:** DPAPI schützt nur gegen andere User. Jeder Local-Agent des Owners könnte ihn entschlüsseln.
 - **Docker-in-Docker:** braucht `--privileged`. Docker-Zugriff ist root-äquivalent und hebt die Grenze auf.
-- **Windows Hello als FIDO2-Authenticator für SSH:** Unter Windows 25H2 verlangt OpenSSH für Windows trotz Windows Hello einen externen Key (Win32-OpenSSH, Issues 2408 und 2413).
+- **SSH-Schlüssel `ed25519-sk` auf einem FIDO2-Key für lokale Pushes des Owners:** Jeder Push bräuchte eine Berührung, ein Agent könnte ihn also nicht allein abschließen. Der Owner hält Kauf und Einrichtung eines Keys für unverhältnismäßig, github.dev reicht (#31). Windows Hello ersetzt den Key nicht: Unter Windows 25H2 verlangt OpenSSH für Windows trotz Windows Hello einen externen Key (Win32-OpenSSH, Issues 2408 und 2413).
 - **Signierte Commits:** Die Signatur käme aus derselben Sandbox wie der Push und bewiese nichts zusätzlich.
