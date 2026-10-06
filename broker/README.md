@@ -19,13 +19,15 @@ Der Broker hört nur auf `127.0.0.1:<port>`. Docker Desktop leitet `host.docker.
 
 ## Ablage auf dem Host
 
+`<name>` ist `[broker] name` aus `harness.toml`. Jedes Projekt bekommt einen eigenen Namen, damit mehrere Broker auf einem Rechner nebeneinander laufen (dann auch einen eigenen `port`).
+
 | Was | Wo | Rechte |
 |---|---|---|
-| Code aus `origin/main`, Abhängigkeiten in `broker\lib` | `C:\Program Files\harness-broker\quelle\` | nur Admins schreiben |
+| Code aus `origin/main`, Abhängigkeiten in `broker\lib` | `C:\Program Files\<name>\quelle\` | nur Admins schreiben |
 | Python | `C:\Program Files\Python313\` (python.org, für alle Benutzer) | nur Admins schreiben |
-| Key (DPAPI des Dienstkontos), Admin-Geheimnis, Log | `C:\ProgramData\harness-broker\` | Dienstkonto ändern, Owner lesen |
-| Dienstkonto | lokaler User `harness-broker`, Passwort in Bitwarden | – |
-| Autostart | Aufgabe `harness-broker` in der Aufgabenplanung, beim Systemstart | – |
+| Key (DPAPI des Dienstkontos), Admin-Geheimnis, Log | `C:\ProgramData\<name>\` | Dienstkonto ändern, Owner lesen |
+| Dienstkonto | lokaler User `<name>`, Passwort in Bitwarden | – |
+| Autostart | Aufgabe `<name>` in der Aufgabenplanung, beim Systemstart | – |
 
 Code und Python liegen außerhalb des Benutzerordners des Owners, denn dort könnte jeder Agent unter dessen Login Code ändern, den dann das Dienstkonto ausführt. Gestartet wird über `dienst.py` mit dem System-Python, nicht über einen venv-Launcher: Dessen Unterprozess beendet „Aufgabe stoppen“ nicht mit.
 
@@ -34,7 +36,7 @@ Code und Python liegen außerhalb des Benutzerordners des Owners, denn dort kön
 Einrichten, nachdem der Broker auf `main` gemergt ist, aus PowerShell im Repo-Ordner:
 
 ```powershell
-& "C:\Program Files\Git\bin\bash.exe" broker/einrichten.sh 29
+& "C:\Program Files\Git\bin\bash.exe" broker/einrichten.sh <ticket-nr-fuer-abnahme>
 ```
 
 Der Wizard führt durch Dienstkonto, Installation, Key-Import, Autostart und Abnahme. Admin-Schritte legt er als Block in die Zwischenablage, eingefügt wird er in ein Fenster `powershell -NoProfile` mit Admin-Rechten. Zwei Stolpersteine, die er abfängt:
@@ -48,7 +50,7 @@ Aktualisieren nach einem Merge auf `main`: Admin-Fenster öffnen (Stufe 1), dann
 $env:STUFEN = '3'; & "C:\Program Files\Git\bin\bash.exe" broker/einrichten.sh; Remove-Item Env:STUFEN
 ```
 
-Im Admin-Fenster danach `Stop-ScheduledTask harness-broker; Start-ScheduledTask harness-broker`.
+Im Admin-Fenster danach `Stop-ScheduledTask <name>; Start-ScheduledTask <name>`.
 
 `requirements.txt` ist aus `uv.lock` erzeugt (`uv export --frozen --no-dev --no-emit-project --format requirements.txt -o requirements.txt`) und wird mit `--require-hashes` installiert. Nach jeder Änderung an den Abhängigkeiten neu erzeugen.
 
@@ -56,8 +58,8 @@ Wird das Passwort des Dienstkontos zurückgesetzt statt geändert, ist der DPAPI
 
 ## Kill-Switch
 
-1. **Broker stoppen:** im Admin-Fenster `Stop-ScheduledTask harness-broker` (für dauerhaft zusätzlich `Disable-ScheduledTask harness-broker`). Ab sofort gibt es keine neuen Tokens mehr. Ausgestellte Tokens laufen spätestens nach 1 h ab.
-2. **Installation sperren:** <https://github.com/settings/installations> → `kaiba-agent` → **Configure** → ganz unten **Suspend**. Danach lehnt GitHub auch bereits ausgestellte Tokens ab.
+1. **Broker stoppen:** im Admin-Fenster `Stop-ScheduledTask <name>` (für dauerhaft zusätzlich `Disable-ScheduledTask <name>`). Ab sofort gibt es keine neuen Tokens mehr. Ausgestellte Tokens laufen spätestens nach 1 h ab.
+2. **Installation sperren:** <https://github.com/settings/installations> → die App aus `[github_app] slug` → **Configure** → ganz unten **Suspend**. Danach lehnt GitHub auch bereits ausgestellte Tokens ab.
 3. **`setup-token` widerrufen** (ADR 0005, Claude-Zugang).
 
 ## Restrisiken

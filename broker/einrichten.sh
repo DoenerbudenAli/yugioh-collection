@@ -185,33 +185,38 @@ finish() {
 # ──────────────────────────────────────────────────────────────────────────
 
 
-# Einrichtung des Brokers auf dem Windows-Host (ADR 0005, Ticket #29). Siehe README.md.
+# Einrichtung des Brokers auf dem Windows-Host (ADR 0005). Siehe README.md.
+# Alles Projektspezifische (Name des Brokers, App, Repo, Port) kommt aus harness.toml.
 #
 # Aus PowerShell im Repo-Ordner:
 #   & "C:\Program Files\Git\bin\bash.exe" broker/einrichten.sh [<issue-nummer-fuer-abnahme>]
 # Nur ausgewählte Stufen, z. B. Stufe 3 für ein Update nach einem Merge:
 #   $env:STUFEN = '3'; & "C:\Program Files\Git\bin\bash.exe" broker/einrichten.sh; Remove-Item Env:STUFEN
 #
-# Für einen Probelauf lassen sich ZIEL, DATEN und PY überschreiben.
+# Für einen Probelauf lassen sich ZIEL, DATEN, PY und BERICHT überschreiben.
 
 TOTAL_STAGES=10
 
-KONTO="harness-broker"
-ZIEL_WIN='C:\Program Files\harness-broker'
-DATEN_WIN='C:\ProgramData\harness-broker'
-ZIEL="${ZIEL:-/c/Program Files/harness-broker}"
-DATEN="${DATEN:-/c/ProgramData/harness-broker}"
 PY="${PY:-/c/Program Files/Python313/python.exe}"
-DIENST="$ZIEL/quelle/broker/dienst.py"
-
 REPO_WURZEL="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 REPO="$(git -C "$REPO_WURZEL" remote get-url origin | sed -E 's#^(https://github.com/|git@github.com:)##; s#\.git$##')"
 _toml() { "$PY" -I -c "import sys,tomllib; d=tomllib.load(open(sys.argv[1],'rb')); print(d$1)" "$REPO_WURZEL/harness.toml"; }
 SLUG="$(_toml "['github_app']['slug']")"
 BOT_ID="$(_toml "['github_app']['bot_user_id']")"
 PORT="$(_toml "['broker']['port']")"
+# Name von Dienstkonto, Aufgabe und Ordnern. Je Projekt eigener Name, damit mehrere Broker
+# auf einem Rechner nebeneinander laufen. Wird in PowerShell-Blöcke eingesetzt, daher nur [a-z0-9-].
+NAME="$(_toml "['broker']['name']")"
+[[ "$NAME" =~ ^[a-z0-9-]{1,20}$ ]] || { echo "harness.toml: [broker] name muss [a-z0-9-], höchstens 20 Zeichen sein: '$NAME'" >&2; exit 1; }
+
+KONTO="$NAME"
+ZIEL_WIN="C:\Program Files\$NAME"
+DATEN_WIN="C:\ProgramData\$NAME"
+ZIEL="${ZIEL:-/c/Program Files/$NAME}"
+DATEN="${DATEN:-/c/ProgramData/$NAME}"
+DIENST="$ZIEL/quelle/broker/dienst.py"
 ISSUE="${1:-}"
-BERICHT="$(cd "$REPO_WURZEL/.." && pwd)/broker-abnahme.txt"
+BERICHT="${BERICHT:-$(cd "$REPO_WURZEL/.." && pwd)/broker-abnahme.txt}"
 ARBEIT="$(mktemp -d)"
 trap 'rm -rf "$ARBEIT"' EXIT
 
@@ -226,8 +231,9 @@ nur() { [[ -z "${STUFEN:-}" || " $STUFEN " == *" $1 "* ]]; }
 stufe() { _STAGE_INDEX=$(($1 - 1)); stage "$2"; }
 
 # admin_block: PowerShell-Befehle von stdin in die Zwischenablage legen und anzeigen.
+# Platzhalter __NAME__ und __REPO__ werden durch die Werte aus harness.toml bzw. git ersetzt.
 admin_block() {
-  local block; block="$(cat)"
+  local block; block="$(sed "s#__NAME__#$NAME#g; s#__REPO__#$REPO#g")"
   printf '%s\r\n' "$block" | clip.exe
   step "Der Befehl liegt in der Zwischenablage. Ins Fenster „Administrator: Windows PowerShell“"
   say  "  klicken, Strg+V drücken, dann Enter. Warten, bis „FERTIG Stufe …“ erscheint."
@@ -287,7 +293,7 @@ if nur 2; then
   step "Passwort kopieren (Kopier-Symbol neben dem Passwort)."
   pause "Passwort in Bitwarden gespeichert und kopiert? Enter"
   admin_block <<'PS'
-& { $ErrorActionPreference = 'Stop'; $konto = 'harness-broker'
+& { $ErrorActionPreference = 'Stop'; $konto = '__NAME__'
 $global:cred = Get-Credential -UserName "$env:COMPUTERNAME\$konto" -Message 'Passwort des Dienstkontos aus Bitwarden einfuegen'
 if (-not (Get-LocalUser -Name $konto -ErrorAction SilentlyContinue)) { New-LocalUser -Name $konto -Password $global:cred.Password -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -Description 'Broker fuer Rollen-Tokens (ADR 0005)' | Out-Null }
 if (-not (Get-LocalGroupMember -SID 'S-1-5-32-545' -Member $konto -ErrorAction SilentlyContinue)) { Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $konto }
@@ -308,9 +314,9 @@ if nur 3; then
   stufe 3 "Broker-Code aus main installieren"
   say "Holt $REPO (Branch main) direkt von GitHub nach $ZIEL_WIN"
   say "und installiert die Pakete mit festen Prüfsummen. Dauert etwa eine Minute."
-  sed "s#__REPO__#$REPO#g" <<'PS' | admin_block
+  admin_block <<'PS'
 & { $ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
-$ziel = 'C:\Program Files\harness-broker'; $py = 'C:\Program Files\Python313\python.exe'
+$ziel = 'C:\Program Files\__NAME__'; $py = 'C:\Program Files\Python313\python.exe'
 New-Item -ItemType Directory -Force $ziel | Out-Null; $zip = Join-Path $ziel 'main.zip'
 Invoke-WebRequest -UseBasicParsing 'https://github.com/__REPO__/archive/refs/heads/main.zip' -OutFile $zip
 foreach ($d in "$ziel\quelle", "$ziel\entpackt") { if (Test-Path $d) { Remove-Item -Recurse -Force $d } }
@@ -338,9 +344,9 @@ if nur 4; then
   say "In $DATEN_WIN liegen Key, Admin-Geheimnis und Log."
   say "Das Dienstkonto darf dort schreiben, du nur lesen, sonst niemand außer Admins."
   admin_block <<'PS'
-& { $ErrorActionPreference = 'Stop'; $daten = 'C:\ProgramData\harness-broker'; $ich = "$env:USERDOMAIN\$env:USERNAME"
+& { $ErrorActionPreference = 'Stop'; $daten = 'C:\ProgramData\__NAME__'; $ich = "$env:USERDOMAIN\$env:USERNAME"
 New-Item -ItemType Directory -Force $daten | Out-Null
-icacls $daten /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' 'harness-broker:(OI)(CI)M' "${ich}:(OI)(CI)RX"; if ($LASTEXITCODE) { throw 'icacls fehlgeschlagen' }
+icacls $daten /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '__NAME__:(OI)(CI)M' "${ich}:(OI)(CI)RX"; if ($LASTEXITCODE) { throw 'icacls fehlgeschlagen' }
 icacls $daten
 'FERTIG Stufe 4' }
 PS
@@ -356,10 +362,10 @@ if nur 5; then
   say "verschlüsselt. Nur dieses Konto kann ihn danach öffnen."
   admin_block <<'PS'
 & { $ErrorActionPreference = 'Stop'
-$daten = 'C:\ProgramData\harness-broker'; $ziel = 'C:\Program Files\harness-broker'; $imp = "$daten\import"
-if (-not $global:cred) { $global:cred = Get-Credential -UserName "$env:COMPUTERNAME\harness-broker" -Message 'Passwort des Dienstkontos aus Bitwarden einfuegen' }
+$daten = 'C:\ProgramData\__NAME__'; $ziel = 'C:\Program Files\__NAME__'; $imp = "$daten\import"
+if (-not $global:cred) { $global:cred = Get-Credential -UserName "$env:COMPUTERNAME\__NAME__" -Message 'Passwort des Dienstkontos aus Bitwarden einfuegen' }
 New-Item -ItemType Directory -Force $imp | Out-Null
-icacls $imp /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' 'harness-broker:(OI)(CI)M' | Out-Null; if ($LASTEXITCODE) { throw 'icacls fehlgeschlagen' }
+icacls $imp /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '__NAME__:(OI)(CI)M' | Out-Null; if ($LASTEXITCODE) { throw 'icacls fehlgeschlagen' }
 Write-Host 'Jetzt den Private Key aus Bitwarden hier einfuegen (Rechtsklick ins Fenster).' -ForegroundColor Yellow
 $zeilen = @(); do { $z = Read-Host; $zeilen += $z.Trim() } until ($z -match '-----END [A-Z ]*PRIVATE KEY-----')
 Clear-Host
@@ -392,22 +398,22 @@ if nur 6; then
   say "Eine Aufgabe „$KONTO“ startet den Broker beim Systemstart unter dem Dienstkonto. Dafür braucht"
   say "das Konto das Windows-Recht „Anmelden als Batchauftrag“; der Block setzt es, falls es fehlt."
   admin_block <<'PS'
-& { $ErrorActionPreference = 'Stop'; $ziel = 'C:\Program Files\harness-broker'; $daten = 'C:\ProgramData\harness-broker'; $imp = "$daten\import"
-$sid = (Get-LocalUser -Name 'harness-broker').SID.Value
+& { $ErrorActionPreference = 'Stop'; $ziel = 'C:\Program Files\__NAME__'; $daten = 'C:\ProgramData\__NAME__'; $imp = "$daten\import"
+$sid = (Get-LocalUser -Name '__NAME__').SID.Value
 secedit /export /cfg "$imp\rechte-alt.inf" /areas USER_RIGHTS /quiet; if ($LASTEXITCODE) { throw 'secedit export fehlgeschlagen' }
 $alt = Get-Content "$imp\rechte-alt.inf" | Where-Object { $_ -match '^SeBatchLogonRight\s*=' }
 if ($alt -match [regex]::Escape("*$sid")) { 'Recht ist schon da' } else {
 $wert = if ($alt) { ($alt -split '=', 2)[1].Trim() + ",*$sid" } else { "*$sid" }
 @('[Unicode]', 'Unicode=yes', '[Version]', 'signature="$CHICAGO$"', 'Revision=1', '[Privilege Rights]', "SeBatchLogonRight = $wert") | Set-Content "$imp\rechte-neu.inf" -Encoding Unicode
 secedit /configure /db "$imp\rechte.sdb" /cfg "$imp\rechte-neu.inf" /areas USER_RIGHTS /quiet; if ($LASTEXITCODE) { throw 'secedit configure fehlgeschlagen' }
-'Recht Anmelden als Batchauftrag fuer harness-broker gesetzt' }
+'Recht Anmelden als Batchauftrag fuer __NAME__ gesetzt' }
 Remove-Item "$imp\rechte-*.inf", "$imp\rechte.sdb" -Force -ErrorAction SilentlyContinue
-if (-not $global:cred) { $global:cred = Get-Credential -UserName "$env:COMPUTERNAME\harness-broker" -Message 'Passwort des Dienstkontos aus Bitwarden einfuegen' }
+if (-not $global:cred) { $global:cred = Get-Credential -UserName "$env:COMPUTERNAME\__NAME__" -Message 'Passwort des Dienstkontos aus Bitwarden einfuegen' }
 $aktion = New-ScheduledTaskAction -Execute 'C:\Program Files\Python313\python.exe' -Argument "-E -s `"$ziel\quelle\broker\dienst.py`" start --daten `"$daten`" --konfig `"$ziel\quelle\harness.toml`"" -WorkingDirectory $ziel
 $einst = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-Register-ScheduledTask -TaskName 'harness-broker' -Action $aktion -Trigger (New-ScheduledTaskTrigger -AtStartup) -Settings $einst -User $global:cred.UserName -Password $global:cred.GetNetworkCredential().Password -RunLevel Limited -Force | Out-Null
-Start-ScheduledTask -TaskName 'harness-broker'; Start-Sleep -Seconds 8
-Get-ScheduledTaskInfo -TaskName 'harness-broker' | Format-List LastRunTime, LastTaskResult
+Register-ScheduledTask -TaskName '__NAME__' -Action $aktion -Trigger (New-ScheduledTaskTrigger -AtStartup) -Settings $einst -User $global:cred.UserName -Password $global:cred.GetNetworkCredential().Password -RunLevel Limited -Force | Out-Null
+Start-ScheduledTask -TaskName '__NAME__'; Start-Sleep -Seconds 8
+Get-ScheduledTaskInfo -TaskName '__NAME__' | Format-List LastRunTime, LastTaskResult
 'FERTIG Stufe 6' }
 PS
   note "Erwartet: „Recht … gesetzt“ oder „Recht ist schon da“, dann LastTaskResult 267009 (heißt: läuft)."
@@ -430,7 +436,7 @@ fi
 # ── 8 ─────────────────────────────────────────────────────────────────────
 if nur 8; then
   stufe 8 "Abnahme: Rechte der Rollen bei GitHub"
-  [[ -n "$ISSUE" ]] || ask ISSUE "Nummer des Tickets, das den Abnahme-Kommentar bekommt (z. B. 29):"
+  [[ -n "$ISSUE" ]] || ask ISSUE "Nummer des Tickets, das den Abnahme-Kommentar bekommt:"
   say "Der Wizard holt je ein Token der Rollen planung und bau und probiert sie an GitHub aus."
   git -c credential.helper= clone -q --depth 1 "https://github.com/$REPO.git" "$ARBEIT/klon" 2>/dev/null || true
   git -C "$ARBEIT/klon" -c user.name="$SLUG[bot]" -c user.email="$BOT_ID+$SLUG[bot]@users.noreply.github.com" \
@@ -495,14 +501,14 @@ if nur 10; then
   anmelden "$SK" planung >/dev/null
   ALT="$(admin_geheimnis)"
   admin_block <<'PS'
-Stop-ScheduledTask -TaskName 'harness-broker'; 'FERTIG Stufe 10a'
+Stop-ScheduledTask -TaskName '__NAME__'; 'FERTIG Stufe 10a'
 PS
   pause "„FERTIG Stufe 10a“ erschienen? Enter"
   sleep 2
   if lauscht; then falsch "Broker läuft nach dem Stoppen weiter"; else ok "Broker nach dem Stoppen weg"; fi
   pruefe "Token-Anfrage bei gestopptem Broker (keine Verbindung)" "$(broker /token '{"rolle": "planung"}' "$SK")" 000
   admin_block <<'PS'
-Start-ScheduledTask -TaskName 'harness-broker'; 'FERTIG Stufe 10b'
+Start-ScheduledTask -TaskName '__NAME__'; 'FERTIG Stufe 10b'
 PS
   pause "„FERTIG Stufe 10b“ erschienen? Enter"
   for _ in 1 2 3 4 5 6 7 8 9 10; do

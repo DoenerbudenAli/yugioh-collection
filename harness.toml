@@ -13,6 +13,8 @@ bot_user_id = 338301849
 # Broker für Rollen-Tokens (ADR 0005, „Broker“, „Rollen“, „Rollenbindung“). Er hört nur auf 127.0.0.1,
 # Container erreichen ihn über host.docker.internal. Metadata (lesen) gibt GitHub jedem Token dazu.
 [broker]
+# Name von Dienstkonto, Aufgabe und Ordnern auf dem Host (nur a-z, 0-9, -).
+name = "harness-broker"
 repository = "yugioh-collection"
 port = 8790
 
