@@ -1,0 +1,36 @@
+[project]
+name = "devcontainer"
+version = "0.1.0"
+description = "Startskript, Ausweis und Konfiguration des Agenten-Containers (ADR 0005)."
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.414",
+    "pytest>=8",
+    "ruff>=0.16.10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]  # deutsche Umlaute und Anführungszeichen sind gewollt
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106", "S310", "S603", "S607"]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+pythonVersion = "3.13"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["container: braucht Docker und baut bzw. startet das Image"]
