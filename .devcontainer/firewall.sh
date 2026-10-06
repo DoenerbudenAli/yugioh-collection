@@ -11,7 +11,18 @@ fehler() { echo "firewall: $*" >&2; exit 1; }
 # 1. Erlaubte Adressen sammeln, solange das Netz noch offen ist.
 ipset destroy erlaubt 2>/dev/null || true
 ipset create erlaubt hash:net
-meta=$(curl -fsS --max-time 20 https://api.github.com/meta) || fehler "api.github.com/meta nicht abrufbar"
+# Die einzige GitHub-API-Abfrage je Start: anonym gilt ein Limit von 60/h je IP (alle Container zusammen).
+meta_url="${HARNESS_GITHUB_META_URL:-https://api.github.com/meta}"
+kopf=$(mktemp)
+status=$(curl -sS --max-time 20 -D "$kopf" -o /tmp/github-meta.json -w '%{http_code}' "$meta_url" || true)
+if [ "$status" != 200 ]; then
+    if grep -qi '^x-ratelimit-remaining: *0' "$kopf"; then
+        reset=$(awk -F': *' 'tolower($1) == "x-ratelimit-reset" {print $2+0}' "$kopf")
+        fehler "GitHub-Abfragelimit erschöpft (anonym 60/h je IP), wieder frei in $(( (reset - $(date +%s)) / 60 + 1 )) min ($(date -u -d "@$reset" +%H:%M) UTC)"
+    fi
+    fehler "$meta_url nicht abrufbar (HTTP ${status:-keine Antwort})"
+fi
+meta=$(cat /tmp/github-meta.json)
 for schluessel in $GITHUB_META; do
     for netz in $(jq -r --arg s "$schluessel" '.[$s][]? | select(contains(":") | not)' <<<"$meta"); do
         ipset add erlaubt "$netz" -exist
@@ -56,6 +67,7 @@ fi
 if curl -sS --max-time 5 -o /dev/null https://example.com 2>/dev/null; then
     fehler "Selbsttest fehlgeschlagen: example.com ist erreichbar"
 fi
-curl -fsS --max-time 10 -o /dev/null https://api.github.com/zen \
-    || fehler "Selbsttest fehlgeschlagen: api.github.com ist nicht erreichbar"
+# github.com statt der API: Jede HTTP-Antwort beweist die Verbindung und kostet kein Abfragelimit.
+curl -sS --max-time 10 -o /dev/null https://github.com \
+    || fehler "Selbsttest fehlgeschlagen: github.com ist nicht erreichbar"
 echo "firewall: Allowlist aktiv ($(ipset list erlaubt | grep -c '^[0-9]') Netze, Broker $broker_ip:$BROKER_PORT)"

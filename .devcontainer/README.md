@@ -42,7 +42,7 @@ Standard ist DROP. Erlaubt sind:
 - der Broker über `host.docker.internal` auf seinem Port;
 - DNS zu den Nameservern des Containers.
 
-Die IPs werden beim Start aufgelöst. Die Allowlist wird beim Bauen aus dem `harness.toml` von `main` ins Image übernommen. Der Clone im Volume kann sie nicht ändern. **Neue Domains kommen per PR in `harness.toml`**, danach baut der Workflow ein neues Image.
+Die IPs werden beim Start aufgelöst. Dafür ruft jeder Start einmal anonym `api.github.com/meta` auf. GitHub erlaubt davon 60 je Stunde und IP, für alle Container zusammen. Ist das Limit erschöpft, nennt `docker logs agent-<name>` die Wartezeit. Die Allowlist wird beim Bauen aus dem `harness.toml` von `main` ins Image übernommen. Der Clone im Volume kann sie nicht ändern. **Neue Domains kommen per PR in `harness.toml`**, danach baut der Workflow ein neues Image.
 
 Restrisiken:
 

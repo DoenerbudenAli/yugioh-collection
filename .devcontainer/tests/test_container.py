@@ -181,3 +181,36 @@ def test_neustart_setzt_die_firewall_wieder(image: str) -> None:
         assert _als_agent(name, "curl -fsS --max-time 10 https://api.github.com/zen").returncode == 0
     finally:
         _docker("rm", "--force", name)
+
+
+def test_claude_bietet_keinen_auto_mode_an(container: str) -> None:
+    # Ohne diese Sperre fragt Claude beim ersten Start, ob Auto-Mode statt bypassPermissions Standard wird.
+    einstellungen = _als_agent(container, "cat ~/.claude/settings.json").stdout
+    assert '"disableAutoMode": "disable"' in einstellungen
+
+
+FAKE_META = r"""
+import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(403)
+        self.send_header("x-ratelimit-remaining", "0")
+        self.send_header("x-ratelimit-reset", "1791289200")
+        self.end_headers()
+        self.wfile.write(b"API rate limit exceeded")
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", 8099), H).serve_forever()
+"""
+
+
+def test_abfragelimit_von_github_wird_klar_gemeldet(image: str) -> None:
+    skript = (
+        f"python3 -c '{FAKE_META}' & sleep 1; "
+        "HARNESS_GITHUB_META_URL=http://127.0.0.1:8099/meta /opt/harness/firewall.sh"
+    )
+    ergebnis = _docker(
+        "run", "--rm", "--cap-add=NET_ADMIN", "--cap-add=NET_RAW", "--entrypoint", "bash", image, "-c", skript
+    )
+    assert ergebnis.returncode != 0
+    assert "Abfragelimit" in ergebnis.stderr
+    assert "1791289200" not in ergebnis.stderr
