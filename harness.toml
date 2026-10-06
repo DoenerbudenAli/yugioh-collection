@@ -9,3 +9,18 @@ app_id = 5202274
 installation_id = 168276221
 # Für die noreply-Adresse der Bot-Commits: <bot_user_id>+<slug>[bot]@users.noreply.github.com
 bot_user_id = 338301849
+
+# Broker für Rollen-Tokens (ADR 0005, „Broker“, „Rollen“, „Rollenbindung“). Er hört nur auf 127.0.0.1,
+# Container erreichen ihn über host.docker.internal. Metadata (lesen) gibt GitHub jedem Token dazu.
+[broker]
+repository = "yugioh-collection"
+port = 8790
+
+[broker.rollen.planung]
+issues = "write"
+contents = "read"
+
+[broker.rollen.bau]
+contents = "write"
+pull_requests = "write"
+issues = "read"
