@@ -26,15 +26,17 @@ COPY --from=uv /uv /uvx /usr/local/bin/
 RUN npm install -g "pnpm@${PNPM_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && npm cache clean --force
 
+# egress: eigener User des Egress-Proxys. Die Firewall lässt nur ihn hinaus (owner match).
 RUN userdel --remove node \
     && useradd --create-home --uid 1000 --shell /bin/bash agent \
+    && useradd --system --no-create-home --shell /usr/sbin/nologin egress \
     && install -d -o agent -g agent /arbeit
 
 COPY .devcontainer/src /opt/harness/src
 # Wrapper in /usr/local/bin: Das steht auch in Login-Shells vor /usr/bin.
 COPY --chmod=0755 .devcontainer/bin/ /usr/local/bin/
 COPY --chmod=0755 .devcontainer/einstieg.sh .devcontainer/firewall.sh .devcontainer/als-agent.sh \
-    .devcontainer/github-netze.sh .devcontainer/skills-holen.sh .devcontainer/skills-installieren.sh /opt/harness/
+    .devcontainer/skills-holen.sh .devcontainer/skills-installieren.sh /opt/harness/
 COPY harness.toml /opt/harness/harness.toml
 
 # Die Allowlist kommt aus dem harness.toml dieses Builds (main), nicht aus dem Clone im Volume.
@@ -42,12 +44,6 @@ RUN install -d /etc/harness \
     && PYTHONPATH=/opt/harness/src python3 -m devcontainer.konfig netz-env /opt/harness/harness.toml \
         > /etc/harness/netz.env \
     && git config --system credential.helper broker
-
-# GitHub-Netze einmal beim Bauen holen, damit kein Start die GitHub-API braucht (anonym 60/h je IP).
-# Die CI reicht ihr Token als Secret herein (höheres Limit); es landet in keiner Schicht des Images.
-RUN --mount=type=secret,id=github_token,required=false \
-    . /etc/harness/netz.env \
-    && /opt/harness/github-netze.sh $GITHUB_META > /etc/harness/github-netze.txt
 
 COPY --chown=agent:agent .devcontainer/claude-settings.json /home/agent/.claude/settings.json
 # Grundwerte plus Vertrauen in den Clone /arbeit/<repo>: Claude fragt beim ersten Start nicht nach.
@@ -65,6 +61,17 @@ USER agent
 RUN CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1 \
     /opt/harness/skills-installieren.sh /opt/harness/skills < /etc/harness/skills.txt
 USER root
+
+# Alle Werkzeuge (git, gh, uv, pnpm, npm, curl, Claude Code) gehen über den Egress-Proxy (einstieg.sh).
+# Erst hier gesetzt, damit die Bauschritte oben direkt ins Netz gehen. Der Broker ist HTTP und bleibt direkt.
+ENV HARNESS_PROXY_PORT=3128
+ENV HTTPS_PROXY=http://127.0.0.1:${HARNESS_PROXY_PORT} \
+    https_proxy=http://127.0.0.1:${HARNESS_PROXY_PORT} \
+    HTTP_PROXY=http://127.0.0.1:${HARNESS_PROXY_PORT} \
+    http_proxy=http://127.0.0.1:${HARNESS_PROXY_PORT} \
+    NO_PROXY=host.docker.internal,localhost,127.0.0.1 \
+    no_proxy=host.docker.internal,localhost,127.0.0.1 \
+    NODE_USE_ENV_PROXY=1
 
 ENV GIT_TERMINAL_PROMPT=0 \
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \

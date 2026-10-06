@@ -39,8 +39,15 @@ github = "mattpocock/skills"
 version = "v1.2.3"
 commit = "6acc160e4e0cd062dbbbd7a1b26ae92855edf07e"
 
-# Netz-Allowlist im Container (ADR 0005, „Netz“). GitHub-Bereiche kommen aus api.github.com/meta,
-# der Broker ist immer erlaubt. Neue Domains kommen per PR.
+# Netz-Allowlist im Container (ADR 0005, „Netz“): Hostnamen, die der Egress-Proxy auf Port 443 durchlässt,
+# auch für GitHub (git über github.com, gh über api.github.com). Der Broker ist immer erlaubt.
+# Neue Hostnamen kommen per PR.
 [netz]
-github_meta = ["web", "api", "git"]
-domains = ["api.anthropic.com", "pypi.org", "files.pythonhosted.org", "registry.npmjs.org"]
+domains = [
+    "github.com",
+    "api.github.com",
+    "api.anthropic.com",
+    "pypi.org",
+    "files.pythonhosted.org",
+    "registry.npmjs.org",
+]
