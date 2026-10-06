@@ -1,0 +1,78 @@
+# Image der Agenten-Container (ADR 0005, „Grenze“, „Selbstschutz“): bei jedem PR bauen und die
+# Negativproben laufen lassen, aus main nach GHCR schieben. Agenten bauen nie Images.
+name: devcontainer
+
+on:
+  pull_request:
+    paths:
+      - ".devcontainer/**"
+      - "harness.toml"
+      - "justfile"
+      - ".github/workflows/devcontainer.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".devcontainer/**"
+      - "harness.toml"
+      - "justfile"
+      - ".github/workflows/devcontainer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devcontainer-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: .devcontainer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Lint und Typen
+        run: |
+          uv run python -m ruff check .
+          uv run python -m ruff format --check .
+          uv run python -m pyright
+      - name: Unit-Tests
+        run: uv run python -m pytest -m "not container"
+      - name: Image bauen
+        run: docker build -f Dockerfile -t harness-devcontainer:ci ..
+      - name: Negativproben am Image
+        env:
+          HARNESS_TEST_IMAGE: harness-devcontainer:ci
+        run: uv run python -m pytest -m container
+
+  # Nur aus main und erst nach grünen Tests. Der Job baut aus demselben Commit neu, statt ein Image aus dem
+  # Test-Job zu übernehmen: So hat nie ein Schritt mit PR-Code ein Token mit packages: write.
+  veroeffentlichen:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Bauen und nach GHCR schieben
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/devcontainer"
+          docker build -f .devcontainer/Dockerfile \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${SHA}" \
+            -t "${image}:latest" -t "${image}:${SHA}" .
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          docker push "${image}:${SHA}"
+          docker push "${image}:latest"

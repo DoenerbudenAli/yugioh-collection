@@ -24,3 +24,13 @@ contents = "read"
 contents = "write"
 pull_requests = "write"
 issues = "read"
+
+# Devcontainer der Agenten (ADR 0005, „Grenze“). Das Image heißt ghcr.io/<repository klein>/devcontainer.
+[devcontainer]
+repository = "DoenerbudenAli/yugioh-collection"
+
+# Netz-Allowlist im Container (ADR 0005, „Netz“). GitHub-Bereiche kommen aus api.github.com/meta,
+# der Broker ist immer erlaubt. Neue Domains kommen per PR.
+[netz]
+github_meta = ["web", "api", "git"]
+domains = ["api.anthropic.com", "pypi.org", "files.pythonhosted.org", "registry.npmjs.org"]

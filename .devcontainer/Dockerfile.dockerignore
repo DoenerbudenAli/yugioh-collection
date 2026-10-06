@@ -1,0 +1,9 @@
+# Build-Kontext ist der Repo-Root; ins Image kommen nur .devcontainer/ und harness.toml.
+*
+!harness.toml
+!.devcontainer/
+.devcontainer/.venv/
+.devcontainer/**/__pycache__/
+.devcontainer/.pytest_cache/
+.devcontainer/.ruff_cache/
+.devcontainer/tests/
