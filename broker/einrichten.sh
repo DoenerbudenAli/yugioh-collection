@@ -187,8 +187,10 @@ finish() {
 
 # Einrichtung des Brokers auf dem Windows-Host (ADR 0005, Ticket #29). Siehe README.md.
 #
-#   "C:\Program Files\Git\bin\bash.exe" broker/einrichten.sh [<issue-nummer-fuer-abnahme>]
-#   STUFEN="3" ...     # nur ausgewählte Stufen, z. B. für ein Update nach einem Merge
+# Aus PowerShell im Repo-Ordner:
+#   & "C:\Program Files\Git\bin\bash.exe" broker/einrichten.sh [<issue-nummer-fuer-abnahme>]
+# Nur ausgewählte Stufen, z. B. Stufe 3 für ein Update nach einem Merge:
+#   $env:STUFEN = '3'; & "C:\Program Files\Git\bin\bash.exe" broker/einrichten.sh; Remove-Item Env:STUFEN
 #
 # Für einen Probelauf lassen sich ZIEL, DATEN und PY überschreiben.
 
@@ -209,7 +211,7 @@ SLUG="$(_toml "['github_app']['slug']")"
 BOT_ID="$(_toml "['github_app']['bot_user_id']")"
 PORT="$(_toml "['broker']['port']")"
 ISSUE="${1:-}"
-BERICHT="$REPO_WURZEL/../broker-abnahme.txt"
+BERICHT="$(cd "$REPO_WURZEL/.." && pwd)/broker-abnahme.txt"
 ARBEIT="$(mktemp -d)"
 trap 'rm -rf "$ARBEIT"' EXIT
 
@@ -315,11 +317,19 @@ foreach ($d in "$ziel\quelle", "$ziel\entpackt") { if (Test-Path $d) { Remove-It
 Expand-Archive $zip -DestinationPath "$ziel\entpackt"
 Move-Item (Get-ChildItem "$ziel\entpackt" | Select-Object -First 1).FullName "$ziel\quelle"; Remove-Item -Recurse -Force "$ziel\entpackt", $zip
 & $py -I -m pip install --isolated --no-cache-dir --require-hashes --only-binary=:all: --target "$ziel\quelle\broker\lib" -r "$ziel\quelle\broker\requirements.txt"; if ($LASTEXITCODE) { throw 'pip fehlgeschlagen' }
+icacls "$ziel\quelle" /reset /T /C /Q; if ($LASTEXITCODE) { throw 'icacls fehlgeschlagen' }
 & $py -E -s "$ziel\quelle\broker\dienst.py" --help; if ($LASTEXITCODE) { throw 'Broker startet nicht' }
 'FERTIG Stufe 3' }
 PS
   note "Erwartet: „Successfully installed …“, dann die Hilfe „usage: broker …“."
+  note "pip legt die Pakete über deinen TEMP-Ordner an; icacls /reset gibt ihnen die Rechte von Program Files."
   pause "„FERTIG Stufe 3“ erschienen? Enter"
+  if (: >"$ZIEL/quelle/broker/lib/.schreibprobe") 2>/dev/null; then
+    rm -f "$ZIEL/quelle/broker/lib/.schreibprobe"
+    falsch "Dein User kann in $ZIEL_WIN schreiben"
+  else
+    ok "Dein User kann in $ZIEL_WIN nicht schreiben"
+  fi
 fi
 
 # ── 4 ─────────────────────────────────────────────────────────────────────
@@ -342,21 +352,35 @@ fi
 # ── 5 ─────────────────────────────────────────────────────────────────────
 if nur 5; then
   stufe 5 "Private Key als Dienstkonto importieren"
-  say "Ein neues Fenster öffnet sich, das als $KONTO läuft. Nur dieses Konto kann den Key danach öffnen."
+  say "Du fügst den Key im Admin-Fenster ein. Es reicht ihn an das Dienstkonto weiter, das ihn"
+  say "verschlüsselt. Nur dieses Konto kann ihn danach öffnen."
   admin_block <<'PS'
-& { $ErrorActionPreference = 'Stop'; $ziel = 'C:\Program Files\harness-broker'
+& { $ErrorActionPreference = 'Stop'
+$daten = 'C:\ProgramData\harness-broker'; $ziel = 'C:\Program Files\harness-broker'; $imp = "$daten\import"
 if (-not $global:cred) { $global:cred = Get-Credential -UserName "$env:COMPUTERNAME\harness-broker" -Message 'Passwort des Dienstkontos aus Bitwarden einfuegen' }
-Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList '/c', "`"$ziel\quelle\broker\key-import.cmd`"" -Credential $global:cred -LoadUserProfile -WorkingDirectory $ziel
+New-Item -ItemType Directory -Force $imp | Out-Null
+icacls $imp /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' 'harness-broker:(OI)(CI)M' | Out-Null; if ($LASTEXITCODE) { throw 'icacls fehlgeschlagen' }
+Write-Host 'Jetzt den Private Key aus Bitwarden hier einfuegen (Rechtsklick ins Fenster).' -ForegroundColor Yellow
+$zeilen = @(); do { $z = Read-Host; $zeilen += $z.Trim() } until ($z -match '-----END [A-Z ]*PRIVATE KEY-----')
+Clear-Host
+"Gelesen: $($zeilen.Count) Zeilen, erste: $($zeilen[0]), letzte: $($zeilen[-1])"
+Set-Content -Path "$imp\key.pem" -Value ($zeilen -join "`n") -Encoding Ascii
+$py = 'C:\Program Files\Python313\python.exe'; $dienst = "`"$ziel\quelle\broker\dienst.py`""
+try {
+Start-Process -FilePath $py -ArgumentList '-E', '-s', $dienst, 'key-import', '--daten', "`"$daten`"" -Credential $global:cred -LoadUserProfile -WorkingDirectory $ziel -RedirectStandardInput "$imp\key.pem" -RedirectStandardOutput "$imp\ausgabe.txt" -RedirectStandardError "$imp\fehler.txt" -Wait
+} finally { Remove-Item "$imp\key.pem" -Force }
+Get-Content "$imp\ausgabe.txt"
+Start-Process -FilePath $py -ArgumentList '-E', '-s', $dienst, 'key-pruefen', '--daten', "`"$daten`"" -Credential $global:cred -LoadUserProfile -WorkingDirectory $ziel -RedirectStandardOutput "$imp\ausgabe.txt" -RedirectStandardError "$imp\fehler.txt" -Wait
+Get-Content "$imp\ausgabe.txt", "$imp\fehler.txt"
 'FERTIG Stufe 5' }
 PS
-  step "Im neuen schwarzen Fenster steht „PEM des Private Keys einfügen …“."
-  step "In Bitwarden den Eintrag mit dem Private Key der App öffnen und den ganzen Text kopieren"
-  say "  (von -----BEGIN bis -----END … KEY-----)."
-  step "Ins neue Fenster klicken, Strg+V. Dann Enter, dann Strg+Z, dann noch einmal Enter."
-  say "Erwartet: „Key importiert …“, „Fingerabdruck SHA256:…“ und darunter „Key lesbar“."
+  step "Im Admin-Fenster erscheint gelb „Jetzt den Private Key aus Bitwarden hier einfuegen“."
+  step "In Bitwarden den Private Key der App kopieren (von -----BEGIN bis -----END … KEY-----)."
+  step "Rechtsklick ins Admin-Fenster. Der Rest läuft von selbst, danach wird das Fenster geleert."
+  note "Kommt nach dem Rechtsklick nichts, fehlte am Ende ein Zeilenumbruch: einmal Enter drücken."
+  say "Erwartet: „Gelesen: … Zeilen …“, „Key importiert …“, „Fingerabdruck SHA256:…“, „Key lesbar“."
   open_url "https://github.com/settings/apps/$SLUG"
-  step "Auf der App-Seite ganz nach unten zu „Private keys“: Der Fingerabdruck dort muss gleich sein."
-  step "Im schwarzen Fenster eine Taste drücken, es schließt sich."
+  step "Auf der App-Seite ganz unten unter „Private keys“: Der Fingerabdruck dort muss gleich sein."
   warn "Der Key war in der Zwischenablage. Falls der Verlauf an ist: Windows-Taste + V → „Alle löschen“."
   pause "Fingerabdruck gleich und „Key lesbar“? Enter"
   printf '' | clip.exe
@@ -365,18 +389,29 @@ fi
 # ── 6 ─────────────────────────────────────────────────────────────────────
 if nur 6; then
   stufe 6 "Autostart einrichten und Broker starten"
-  say "Eine Aufgabe „$KONTO“ startet den Broker beim Systemstart unter dem Dienstkonto."
+  say "Eine Aufgabe „$KONTO“ startet den Broker beim Systemstart unter dem Dienstkonto. Dafür braucht"
+  say "das Konto das Windows-Recht „Anmelden als Batchauftrag“; der Block setzt es, falls es fehlt."
   admin_block <<'PS'
-& { $ErrorActionPreference = 'Stop'; $ziel = 'C:\Program Files\harness-broker'; $daten = 'C:\ProgramData\harness-broker'
+& { $ErrorActionPreference = 'Stop'; $ziel = 'C:\Program Files\harness-broker'; $daten = 'C:\ProgramData\harness-broker'; $imp = "$daten\import"
+$sid = (Get-LocalUser -Name 'harness-broker').SID.Value
+secedit /export /cfg "$imp\rechte-alt.inf" /areas USER_RIGHTS /quiet; if ($LASTEXITCODE) { throw 'secedit export fehlgeschlagen' }
+$alt = Get-Content "$imp\rechte-alt.inf" | Where-Object { $_ -match '^SeBatchLogonRight\s*=' }
+if ($alt -match [regex]::Escape("*$sid")) { 'Recht ist schon da' } else {
+$wert = if ($alt) { ($alt -split '=', 2)[1].Trim() + ",*$sid" } else { "*$sid" }
+@('[Unicode]', 'Unicode=yes', '[Version]', 'signature="$CHICAGO$"', 'Revision=1', '[Privilege Rights]', "SeBatchLogonRight = $wert") | Set-Content "$imp\rechte-neu.inf" -Encoding Unicode
+secedit /configure /db "$imp\rechte.sdb" /cfg "$imp\rechte-neu.inf" /areas USER_RIGHTS /quiet; if ($LASTEXITCODE) { throw 'secedit configure fehlgeschlagen' }
+'Recht Anmelden als Batchauftrag fuer harness-broker gesetzt' }
+Remove-Item "$imp\rechte-*.inf", "$imp\rechte.sdb" -Force -ErrorAction SilentlyContinue
 if (-not $global:cred) { $global:cred = Get-Credential -UserName "$env:COMPUTERNAME\harness-broker" -Message 'Passwort des Dienstkontos aus Bitwarden einfuegen' }
 $aktion = New-ScheduledTaskAction -Execute 'C:\Program Files\Python313\python.exe' -Argument "-E -s `"$ziel\quelle\broker\dienst.py`" start --daten `"$daten`" --konfig `"$ziel\quelle\harness.toml`"" -WorkingDirectory $ziel
 $einst = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 Register-ScheduledTask -TaskName 'harness-broker' -Action $aktion -Trigger (New-ScheduledTaskTrigger -AtStartup) -Settings $einst -User $global:cred.UserName -Password $global:cred.GetNetworkCredential().Password -RunLevel Limited -Force | Out-Null
-Start-ScheduledTask -TaskName 'harness-broker'; Start-Sleep -Seconds 5
+Start-ScheduledTask -TaskName 'harness-broker'; Start-Sleep -Seconds 8
 Get-ScheduledTaskInfo -TaskName 'harness-broker' | Format-List LastRunTime, LastTaskResult
 'FERTIG Stufe 6' }
 PS
-  note "Erwartet: LastTaskResult 267009 (heißt: läuft gerade)."
+  note "Erwartet: „Recht … gesetzt“ oder „Recht ist schon da“, dann LastTaskResult 267009 (heißt: läuft)."
+  note "267011 heißt: nie gestartet. Dann hier Strg+C und die Ausgabe an Claude schicken."
   pause "„FERTIG Stufe 6“ erschienen? Enter"
 fi
 
