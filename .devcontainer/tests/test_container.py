@@ -213,9 +213,7 @@ SNI_PROBE = r"""
 import os, socket, ssl, sys
 port = os.environ["HTTPS_PROXY"].rsplit(":", 1)[1]
 s = socket.create_connection(("127.0.0.1", int(port)), timeout=10)
-s.sendall(b"CONNECT %s:443 HTTP/1.1
-
-" % sys.argv[2].encode())
+s.sendall(b"CONNECT %s:443 HTTP/1.1\r\n\r\n" % sys.argv[2].encode())
 assert s.recv(4096).startswith(b"HTTP/1.1 200"), "Tunnel abgelehnt"
 k = ssl.create_default_context(); k.check_hostname = False; k.verify_mode = ssl.CERT_NONE
 k.wrap_socket(s, server_hostname=sys.argv[1]).close()
@@ -268,8 +266,12 @@ def test_werkzeuge_erreichen_die_echten_quellen_ueber_den_proxy(container: str, 
 
 
 def _skills_holen(image: str, zeile: str) -> subprocess.CompletedProcess[str]:
-    """Führt skills-holen.sh im Image mit einer Zeile aus `skills-liste` aus (so wie beim Bauen)."""
-    skript = f"echo '{zeile}' | /opt/harness/skills-holen.sh /tmp/skills"
+    """Führt skills-holen.sh im Image mit einer Zeile aus `skills-liste` aus (so wie beim Bauen).
+
+    Beim Bauen gibt es noch keinen Proxy und kein HTTPS_PROXY; ohne Entrypoint läuft hier auch keiner.
+    """
+    ohne_proxy = "unset HTTPS_PROXY https_proxy HTTP_PROXY http_proxy"
+    skript = f"{ohne_proxy}; echo '{zeile}' | /opt/harness/skills-holen.sh /tmp/skills"
     return _docker("run", "--rm", "--entrypoint", "bash", image, "-c", skript)
 
 
