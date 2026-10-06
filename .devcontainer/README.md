@@ -1,6 +1,6 @@
 # Agenten-Container
 
-Jede Agenten-Session läuft in einem eigenen Container aus diesem Ordner ([ADR 0005](../docs/adr/0005-agenten-isolation.md)). Der Container kennt nur zwei Geheimnisse: einen Schlüssel, mit dem er beim [Broker](../broker/README.md) ein 1-h-Rollen-Token holt, und das `setup-token` für Claude. Ins Netz darf er nur über die Allowlist.
+Jede Agenten-Session für Feature- und Planungs-Arbeit läuft in einem eigenen Container aus diesem Ordner ([ADR 0005](../docs/adr/0005-agenten-isolation.md)). Harness-Arbeit läuft auf dem Host ([ADR 0011](../docs/adr/0011-harness-arbeit-auf-dem-host.md)). Der Container kennt nur zwei Geheimnisse: einen Schlüssel, mit dem er beim [Broker](../broker/README.md) ein 1-h-Rollen-Token holt, und das `setup-token` für Claude. Ins Netz darf er nur über die Allowlist.
 
 ## Bedienung
 

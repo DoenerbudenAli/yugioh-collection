@@ -1,8 +1,16 @@
 # Agenten-Sessions
 
-Jede Agenten-Session zu diesem Repo läuft in einem eigenen Container, auch Planung und Wayfinder ([ADR 0005](../adr/0005-agenten-isolation.md)). Auf dem Host gibt es keine GitHub-Credentials. Eine Local-Session auf dem Host kann das Repo also lesen, aber nichts auf GitHub schreiben.
+Wo eine Session läuft, hängt von der Arbeit ab ([ADR 0005](../adr/0005-agenten-isolation.md), [ADR 0011](../adr/0011-harness-arbeit-auf-dem-host.md)):
 
-## Ablauf
+| Arbeit | Wo | Unter wem |
+|---|---|---|
+| Harness (Regeln, CI, Broker, Devcontainer, ihre Doku) | Claude-Code-App auf dem Host | Owner |
+| Features, Code außerhalb des Harness | Container, `just agent bau <name>` | `<app-slug>[bot]`, Rolle *Bau* |
+| Wayfinder, Grilling, Triage, Research | Container, `just agent planung <name>` | `<app-slug>[bot]`, Rolle *Planung* |
+
+Login, `gh`-Konfiguration und Credential-Helper des Owners gelangen nie in einen Container.
+
+## Ablauf im Container
 
 Aus PowerShell im Repo-Ordner:
 
@@ -27,7 +35,7 @@ Die Rechte stehen in `harness.toml` unter `[broker.rollen.*]`. Braucht eine Plan
 
 ## Owner
 
-- Reviewen, approven, mergen und Einstellungen ändern geht nur im Browser.
-- Eigene Änderungen macht der Owner auf github.dev (im Repo die Taste `.` drücken). Commit und PR laufen dort unter dem Owner.
-- Der lokale Clone holt anonym (`git pull`) und ist nur zum Lesen da.
+- Harness-Arbeit macht der Owner in der App auf dem Host. Der lokale Clone pusht Branches, auf `main` nur per PR.
+- Owner-PRs brauchen kein Approval, das Kern-Gate greift dort nicht. Negativproben, die eine Merge-Sperre beweisen, laufen deshalb als Bot-PR aus `just agent bau probe`.
+- Einstellungen am Repo ändert der Owner im Browser.
 - Notbremse: [Kill-Switch im Broker-README](../../broker/README.md#kill-switch).
