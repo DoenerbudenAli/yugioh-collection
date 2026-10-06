@@ -14,6 +14,7 @@ from devcontainer.agent import (
     Umgebung,
     Zustand,
     abmelden,
+    main,
     start,
     weg,
 )
@@ -262,13 +263,14 @@ class Aufruf:
 class FakeAusfuehren:
     stdout: str = ""
     returncode: int = 0
+    stderr: str = ""
     aufrufe: list[Aufruf] = field(default_factory=list[Aufruf])
 
     def __call__(
         self, argv: Sequence[str], env: Mapping[str, str] | None = None, interaktiv: bool = False
-    ) -> tuple[int, str]:
+    ) -> tuple[int, str, str]:
         self.aufrufe.append(Aufruf(list(argv), dict(env) if env is not None else None, interaktiv))
-        return self.returncode, self.stdout
+        return self.returncode, self.stdout, self.stderr
 
 
 def test_run_gibt_geheimnisse_nur_ueber_die_umgebung_weiter() -> None:
@@ -304,11 +306,50 @@ def test_exec_claude_gibt_das_token_nur_ueber_die_umgebung_weiter() -> None:
 
 
 @pytest.mark.parametrize(
-    ("returncode", "stdout", "erwartet"),
-    [(1, "", "fehlt"), (0, "true\n", "laeuft"), (0, "false\n", "gestoppt")],
+    ("returncode", "stdout", "stderr", "erwartet"),
+    [
+        (1, "", "Error response from daemon: No such container: agent-probe", "fehlt"),
+        (0, "true\n", "", "laeuft"),
+        (0, "false\n", "", "gestoppt"),
+    ],
 )
-def test_zustand_aus_docker_inspect(returncode: int, stdout: str, erwartet: Zustand) -> None:
-    assert CliDocker(FakeAusfuehren(stdout, returncode)).zustand("agent-probe") == erwartet
+def test_zustand_aus_docker_inspect(returncode: int, stdout: str, stderr: str, erwartet: Zustand) -> None:
+    ausfuehren = FakeAusfuehren(stdout, returncode, stderr)
+    assert CliDocker(ausfuehren).zustand("agent-probe") == erwartet
+    # Nur Container: Das gleichnamige Volume agent-<name> darf nicht als Treffer zählen.
+    assert ausfuehren.aufrufe[0].argv[:3] == ["docker", "container", "inspect"]
+
+
+def test_zustand_bei_nicht_laufendem_docker_ist_ein_fehler() -> None:
+    ausfuehren = FakeAusfuehren("", 1, "error during connect: Docker Desktop is not running")
+    with pytest.raises(AgentFehler, match="Docker Desktop is not running"):
+        CliDocker(ausfuehren).zustand("agent-probe")
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    ["Error response from daemon: No such container: agent-probe", "Error: No such volume: agent-probe"],
+)
+def test_entfernen_toleriert_fehlende_objekte(stderr: str) -> None:
+    CliDocker(FakeAusfuehren("", 1, stderr)).entfernen("agent-probe")
+
+
+def test_entfernen_meldet_andere_docker_fehler() -> None:
+    with pytest.raises(AgentFehler, match="error during connect"):
+        CliDocker(FakeAusfuehren("", 1, "error during connect: pipe not found")).entfernen("agent-probe")
+
+
+def test_fehlermeldung_enthaelt_die_ausgabe_von_docker() -> None:
+    ausfuehren = FakeAusfuehren("", 125, 'Conflict. The container name "/agent-probe" is already in use')
+    with pytest.raises(AgentFehler, match="already in use"):
+        CliDocker(ausfuehren).run("agent-probe", "img", {})
+
+
+def test_pull_zeigt_den_fortschritt() -> None:
+    ausfuehren = FakeAusfuehren()
+    CliDocker(ausfuehren).pull("img")
+    assert ausfuehren.aufrufe[0].argv == ["docker", "pull", "img"]
+    assert ausfuehren.aufrufe[0].interaktiv
 
 
 def test_env_von_liest_die_container_umgebung() -> None:
@@ -317,3 +358,36 @@ def test_env_von_liest_die_container_umgebung() -> None:
         "HARNESS_SCHLUESSEL": "a=b",
         "HARNESS_ROLLE": "bau",
     }
+
+
+# --- main: Abbrüche vor jedem Docker-Aufruf ---
+
+
+@pytest.fixture
+def kein_docker(monkeypatch: pytest.MonkeyPatch) -> None:
+    def verboten(*args: object, **kwargs: object) -> None:
+        raise AssertionError("docker darf nicht aufgerufen werden")
+
+    monkeypatch.setattr("devcontainer.agent.subprocess.run", verboten)
+
+
+def test_main_ohne_admin_geheimnis_bricht_vor_docker_ab(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], kein_docker: None
+) -> None:
+    toml = tmp_path / "harness.toml"
+    toml.write_text(BEISPIEL_TOML, encoding="utf-8")
+    monkeypatch.setenv("HARNESS_ADMIN_GEHEIMNIS", str(tmp_path / "fehlt"))
+
+    assert main(["start", "bau", "probe"], toml) == 1
+    assert "Admin-Geheimnis" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("inhalt", ["kein toml [", "[github_app]\nslug = 1\n"])
+def test_main_mit_kaputter_harness_toml_meldet_einen_fehler(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], kein_docker: None, inhalt: str
+) -> None:
+    toml = tmp_path / "harness.toml"
+    toml.write_text(inhalt, encoding="utf-8")
+
+    assert main(["weg", "probe"], toml) == 1
+    assert "harness.toml" in capsys.readouterr().err

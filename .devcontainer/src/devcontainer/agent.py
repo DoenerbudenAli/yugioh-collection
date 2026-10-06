@@ -30,6 +30,8 @@ ARBEIT = "/arbeit"
 BEREIT = "/run/harness/bereit"
 BEREIT_TMPFS = "--tmpfs=/run/harness:uid=1000,gid=1000,mode=0700"
 BEREIT_WARTEN = 180.0
+# So meldet docker ein fehlendes Objekt; jeder andere Fehler (z. B. Docker Desktop aus) ist echt.
+_FEHLT = "No such "
 _NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 ADMIN_GEHEIMNIS_STANDARD = Path(r"C:\ProgramData\harness-broker\admin-geheimnis")
 SETUP_TOKEN_STANDARD = Path.home() / ".config" / "harness" / "claude-setup-token"
@@ -174,20 +176,22 @@ def abmelden(u: Umgebung, name: str) -> int:
     return 0
 
 
-Ausfuehren = Callable[..., tuple[int, str]]
+Ausfuehren = Callable[..., tuple[int, str, str]]
 
 
 def _ausfuehren(
     argv: Sequence[str], env: Mapping[str, str] | None = None, interaktiv: bool = False
-) -> tuple[int, str]:
+) -> tuple[int, str, str]:
     ergebnis = subprocess.run(  # noqa: S603 (feste docker-Befehle, keine Shell)
         list(argv),
         env=None if env is None else dict(env),
         capture_output=not interaktiv,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
-    return ergebnis.returncode, ergebnis.stdout or ""
+    return ergebnis.returncode, ergebnis.stdout or "", ergebnis.stderr or ""
 
 
 class CliDocker:
@@ -196,25 +200,29 @@ class CliDocker:
     def __init__(self, ausfuehren: Ausfuehren = _ausfuehren) -> None:
         self._ausfuehren = ausfuehren
 
-    def _muss(self, argv: list[str], env: Mapping[str, str] | None = None) -> str:
-        code, aus = self._ausfuehren(argv, env)
+    def _muss(self, argv: list[str], env: Mapping[str, str] | None = None, interaktiv: bool = False) -> str:
+        code, aus, fehler = self._ausfuehren(argv, env, interaktiv)
         if code != 0:
-            raise AgentFehler(f"{' '.join(argv[:3])} … ist fehlgeschlagen (Exit {code})")
+            raise AgentFehler(f"{' '.join(argv[:3])} … ist fehlgeschlagen (Exit {code}): {fehler.strip()}")
         return aus
 
     def zustand(self, name: str) -> Zustand:
-        code, aus = self._ausfuehren(["docker", "inspect", "--format", "{{.State.Running}}", name])
+        code, aus, fehler = self._ausfuehren(
+            ["docker", "container", "inspect", "--format", "{{.State.Running}}", name]
+        )
         if code != 0:
-            return "fehlt"
+            if _FEHLT in fehler:
+                return "fehlt"
+            raise AgentFehler(f"docker antwortet nicht: {fehler.strip()}")
         return "laeuft" if aus.strip() == "true" else "gestoppt"
 
     def env_von(self, name: str) -> dict[str, str]:
-        aus = self._muss(["docker", "inspect", "--format", "{{json .Config.Env}}", name])
+        aus = self._muss(["docker", "container", "inspect", "--format", "{{json .Config.Env}}", name])
         eintraege: list[str] = json.loads(aus)
         return dict(e.split("=", 1) for e in eintraege)
 
     def pull(self, image: str) -> None:
-        self._muss(["docker", "pull", image])
+        self._muss(["docker", "pull", image], interaktiv=True)
 
     def volume_anlegen(self, name: str) -> None:
         self._muss(["docker", "volume", "create", name])
@@ -236,8 +244,8 @@ class CliDocker:
         ende = time.monotonic() + BEREIT_WARTEN
         while time.monotonic() < ende:
             if self.zustand(name) != "laeuft":
-                _, log = self._ausfuehren(["docker", "logs", "--tail", "30", name])
-                raise AgentFehler(f"{name} ist beim Start beendet worden:\n{log}")
+                _, log, log_fehler = self._ausfuehren(["docker", "logs", "--tail", "30", name])
+                raise AgentFehler(f"{name} ist beim Start beendet worden:\n{log}{log_fehler}")
             if self._ausfuehren(["docker", "exec", name, "test", "-e", pfad])[0] == 0:
                 return
             time.sleep(1)
@@ -248,12 +256,14 @@ class CliDocker:
             "docker", "exec", "-it", "--user", "agent", "--workdir", arbeitsordner,
             "--env", "CLAUDE_CODE_OAUTH_TOKEN", name, "claude",
         ]  # fmt: skip
-        code, _ = self._ausfuehren(argv, {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": token}, interaktiv=True)
+        code, _, _ = self._ausfuehren(argv, {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": token}, interaktiv=True)
         return code
 
     def entfernen(self, name: str) -> None:
-        self._ausfuehren(["docker", "rm", "--force", name])
-        self._ausfuehren(["docker", "volume", "rm", "--force", name])
+        for argv in (["docker", "rm", "--force", name], ["docker", "volume", "rm", "--force", name]):
+            code, _, fehler = self._ausfuehren(argv)
+            if code != 0 and _FEHLT not in fehler:
+                raise AgentFehler(f"{' '.join(argv[:3])} … ist fehlgeschlagen: {fehler.strip()}")
 
 
 def main(argv: list[str], harness_toml: Path) -> int:
@@ -262,7 +272,12 @@ def main(argv: list[str], harness_toml: Path) -> int:
         print("Aufruf: agent.py start <rolle> <name> | weg <name> | abmelden <name>", file=sys.stderr)
         return 2
     try:
-        konfig = lade_konfig(harness_toml)
+        try:
+            konfig = lade_konfig(harness_toml)
+        except (OSError, KeyError, ValueError, TypeError) as fehler:
+            raise AgentFehler(
+                f"harness.toml unvollständig oder kaputt ({harness_toml}): {fehler!r}"
+            ) from fehler
         admin_datei = Path(os.environ.get("HARNESS_ADMIN_GEHEIMNIS", ADMIN_GEHEIMNIS_STANDARD))
         try:
             admin = admin_datei.read_text(encoding="ascii").strip()

@@ -105,8 +105,16 @@ def test_kein_weg_zu_root_oder_docker(container: str, programm: str) -> None:
 
 def test_agent_ist_nicht_root_und_kann_die_firewall_nicht_aendern(container: str) -> None:
     assert _als_agent(container, "id -u").stdout.strip() != "0"
-    assert _als_agent(container, "iptables -P OUTPUT ACCEPT").returncode != 0
+    # Voller Pfad: In der Login-Shell fehlt /usr/sbin im PATH, ein „command not found“ bewiese nichts.
+    versuch = _als_agent(container, "/usr/sbin/iptables -P OUTPUT ACCEPT")
+    assert versuch.returncode != 0
+    assert "Permission denied" in versuch.stderr
     assert _als_agent(container, "curl -sS --max-time 5 https://example.com").returncode != 0
+
+
+def test_docker_exec_hat_keine_wirksamen_rechte(container: str) -> None:
+    status = _als_agent(container, "grep -E '^(CapEff|NoNewPrivs)' /proc/self/status").stdout.split()
+    assert status == ["CapEff:", "0000000000000000", "NoNewPrivs:", "1"]
 
 
 def test_bereit_zeichen_liegt_auf_tmpfs(container: str) -> None:
