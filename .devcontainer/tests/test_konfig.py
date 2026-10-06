@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from devcontainer.konfig import Konfig, lade_konfig, netz_env
+from devcontainer.konfig import Konfig, Sammlung, claude_json, lade_konfig, netz_env, skills_liste
 
 BEISPIEL_TOML = """
 [github_app]
@@ -21,6 +21,12 @@ contents = "write"
 
 [devcontainer]
 repository = "Beispiel/Repo"
+
+[[devcontainer.skills]]
+plugin = "beispiel-skills"
+github = "beispiel/skills"
+version = "v1.2.3"
+commit = "0123456789abcdef0123456789abcdef01234567"
 
 [netz]
 github_meta = ["web", "api", "git"]
@@ -73,3 +79,50 @@ def test_echte_harness_toml_laesst_sich_laden() -> None:
     assert konfig.domains
     assert konfig.github_meta
     assert konfig.image.startswith("ghcr.io/")
+    assert skills_liste(konfig)
+
+
+def test_skill_sammlungen_mit_fester_version(konfig: Konfig) -> None:
+    assert konfig.skills == (
+        Sammlung(
+            plugin="beispiel-skills",
+            github="beispiel/skills",
+            version="v1.2.3",
+            commit="0123456789abcdef0123456789abcdef01234567",
+        ),
+    )
+
+
+def test_skills_liste_eine_zeile_je_sammlung(konfig: Konfig) -> None:
+    assert skills_liste(konfig).splitlines() == [
+        "beispiel-skills beispiel/skills v1.2.3 0123456789abcdef0123456789abcdef01234567"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("feld", "wert"),
+    [
+        ("plugin", "a b"),
+        ("plugin", "$(id)"),
+        ("github", "nur-ein-teil"),
+        ("github", "a/b/c"),
+        ("github", "a/b;id"),
+        ("version", "-v1"),
+        ("version", "refs/tags/v1"),
+        ("version", ""),
+        ("commit", "6acc160"),
+        ("commit", "Z" * 40),
+    ],
+)
+def test_skills_liste_lehnt_unsichere_werte_ab(konfig: Konfig, feld: str, wert: str) -> None:
+    kaputt = dataclasses.replace(konfig, skills=(dataclasses.replace(konfig.skills[0], **{feld: wert}),))
+    with pytest.raises(ValueError, match=feld):
+        skills_liste(kaputt)
+
+
+def test_claude_vertraut_dem_clone_ohne_rueckfrage(konfig: Konfig) -> None:
+    basis = {"hasCompletedOnboarding": True}
+    assert claude_json(konfig, basis) == {
+        "hasCompletedOnboarding": True,
+        "projects": {"/arbeit/Repo": {"hasTrustDialogAccepted": True}},
+    }

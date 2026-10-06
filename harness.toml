@@ -29,6 +29,15 @@ issues = "read"
 [devcontainer]
 repository = "DoenerbudenAli/yugioh-collection"
 
+# Skill-Sammlungen im Image (ADR 0005, „Selbstschutz“): Claude-Code-Plugins aus einem GitHub-Repo, geholt beim
+# Bauen. version ist ein Tag, commit sein Commit (ein Tag ließe sich verschieben). Der Bau bricht ab, wenn beides
+# nicht zusammenpasst. Neue Sammlung oder neue Version = PR auf diese Datei.
+[[devcontainer.skills]]
+plugin = "mattpocock-skills"  # MIT
+github = "mattpocock/skills"
+version = "v1.2.3"
+commit = "6acc160e4e0cd062dbbbd7a1b26ae92855edf07e"
+
 # Netz-Allowlist im Container (ADR 0005, „Netz“). GitHub-Bereiche kommen aus api.github.com/meta,
 # der Broker ist immer erlaubt. Neue Domains kommen per PR.
 [netz]

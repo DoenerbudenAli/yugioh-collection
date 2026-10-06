@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from devcontainer.agent import CliDocker
-from devcontainer.konfig import lade_konfig
+from devcontainer.konfig import Sammlung, lade_konfig
 
 pytestmark = [
     pytest.mark.container,
@@ -30,7 +30,9 @@ BEREIT = "/run/harness/bereit"
 
 
 def _docker(*argv: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["docker", *argv], capture_output=True, text=True, check=False)
+    return subprocess.run(
+        ["docker", *argv], capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+    )
 
 
 @pytest.fixture(scope="session")
@@ -282,3 +284,48 @@ def test_ohne_github_netze_startet_der_container_nicht(image: str, tmp_path: Pat
         assert "keine GitHub-Netze" in log.stdout + log.stderr
     finally:
         _docker("rm", "--force", name)
+
+
+def _skills_holen(image: str, zeile: str) -> subprocess.CompletedProcess[str]:
+    """Führt skills-holen.sh im Image mit einer Zeile aus `skills-liste` aus (so wie beim Bauen)."""
+    skript = f"echo '{zeile}' | /opt/harness/skills-holen.sh /tmp/skills"
+    return _docker("run", "--rm", "--entrypoint", "bash", image, "-c", skript)
+
+
+def test_skill_version_die_es_nicht_gibt_bricht_den_bau_ab(image: str) -> None:
+    s = KONFIG.skills[0]
+    ergebnis = _skills_holen(image, f"{s.plugin} {s.github} v0.0.0-gibtsnicht {s.commit}")
+    assert ergebnis.returncode != 0
+    assert f"Version v0.0.0-gibtsnicht gibt es in {s.github} nicht" in ergebnis.stderr
+
+
+def test_skill_tag_auf_anderem_commit_bricht_den_bau_ab(image: str) -> None:
+    sammlung = KONFIG.skills[0]
+    ergebnis = _skills_holen(image, f"{sammlung.plugin} {sammlung.github} {sammlung.version} {'0' * 40}")
+    assert ergebnis.returncode != 0
+    assert f"{sammlung.version} zeigt auf {sammlung.commit}" in ergebnis.stderr
+
+
+@pytest.mark.parametrize("sammlung", KONFIG.skills, ids=lambda s: s.plugin)
+def test_skill_sammlungen_sind_installiert(container: str, sammlung: Sammlung) -> None:
+    liste = _als_agent(container, "claude plugin list").stdout
+    assert f"❯ {sammlung.plugin}@" in liste
+    assert "✔ enabled" in liste
+
+
+@pytest.mark.parametrize("skill", ["tdd", "wayfinder"])
+def test_skills_aus_den_bau_tickets_sind_da(container: str, skill: str) -> None:
+    details = _als_agent(container, f"claude plugin details {KONFIG.skills[0].plugin}").stdout
+    assert skill in details
+
+
+def test_agent_kann_die_skills_nicht_aendern(container: str) -> None:
+    ordner = f"/opt/harness/skills/{KONFIG.skills[0].plugin}"
+    assert _als_agent(container, f"test -d {ordner}/skills").returncode == 0
+    assert _als_agent(container, f"touch {ordner}/x").returncode != 0
+    assert _als_agent(container, f"touch {ordner}/skills/x").returncode != 0
+
+
+def test_claude_vertraut_dem_clone(container: str) -> None:
+    daten = json.loads(_als_agent(container, "cat ~/.claude.json").stdout)
+    assert daten["projects"][KLON]["hasTrustDialogAccepted"] is True

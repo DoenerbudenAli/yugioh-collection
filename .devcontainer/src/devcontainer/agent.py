@@ -19,12 +19,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from devcontainer.konfig import Konfig, lade_konfig
+from devcontainer.konfig import ARBEIT, Konfig, lade_konfig
 
 Zustand = Literal["fehlt", "gestoppt", "laeuft"]
 
 ANMELDEDAUER = 24 * 3600
-ARBEIT = "/arbeit"
 # Bereit-Zeichen: entsteht erst, wenn Firewall und Clone stehen. Es liegt auf tmpfs, damit es nach einem
 # Neustart fehlt, bis die Firewall wieder gesetzt ist. uid 1000 ist der User agent im Image.
 BEREIT = "/run/harness/bereit"
@@ -150,7 +149,7 @@ def start(u: Umgebung, rolle: str, name: str) -> int:
             u.docker.start(container)
 
     u.docker.warte_bereit(container, BEREIT)
-    return u.docker.exec_claude(container, f"{ARBEIT}/{u.konfig.repo_name}", token)
+    return u.docker.exec_claude(container, u.konfig.klon, token)
 
 
 def weg(u: Umgebung, name: str) -> int:
