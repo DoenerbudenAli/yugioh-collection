@@ -1,0 +1,65 @@
+# Agenten-Container
+
+Jede Agenten-Session läuft in einem eigenen Container aus diesem Ordner ([ADR 0005](../docs/adr/0005-agenten-isolation.md)). Der Container kennt nur zwei Geheimnisse: einen Schlüssel, mit dem er beim [Broker](../broker/README.md) ein 1-h-Rollen-Token holt, und das `setup-token` für Claude. Ins Netz darf er nur über die Allowlist.
+
+## Bedienung
+
+Aus PowerShell im Repo-Ordner:
+
+```powershell
+just agent bau <name>      # Container agent-<name> anlegen oder fortsetzen, Claude öffnen
+just weg <name>            # Schlüssel abmelden, Container und Volume löschen
+```
+
+- **Rollen** stehen in `harness.toml` unter `[broker.rollen.*]`. Ein vorhandener Container behält seine Rolle.
+- **Neu:** Das Skript erzeugt einen Zufallsschlüssel und meldet ihn für 24 h beim Broker an. Danach holt es das Image aus GHCR, legt das Volume `agent-<name>` an, startet den Container und öffnet Claude (`docker exec … claude`).
+- **Fortsetzen:** Das Skript meldet denselben Schlüssel für weitere 24 h an. Das ist nach jedem Neustart des PCs nötig, weil der Broker beim Start alle Anmeldungen vergisst. Ein gestoppter Container wird neu gestartet und setzt dabei auch die Firewall neu.
+- **`setup-token`** liegt in `%USERPROFILE%\.config\harness\claude-setup-token` und geht nur über die Umgebung von `docker exec` in den Container, nicht auf die Kommandozeile und nicht in die Container-Konfiguration. Ein neues Token wirkt beim nächsten `just agent`.
+- **Nur abmelden**, ohne Container zu löschen: `python .devcontainer/agent.py abmelden <name>`.
+
+Einrichtung und Abnahme auf einem neuen Rechner: `& "C:\Program Files\Git\bin\bash.exe" .devcontainer/einrichten.sh`.
+
+## Im Container
+
+| Was | Wo |
+|---|---|
+| Clone | `/arbeit/<repo>` im Volume `agent-<name>`, ein eigener pro Container |
+| User | `agent` ohne sudo, ohne Capabilities, ohne Docker |
+| git, gh | Credential-Helper `git-credential-broker` und Wrapper `/usr/local/bin/gh` holen das Token beim Broker. Es liegt bis 5 min vor Ablauf in `~/.cache/harness/token.json`. |
+| Commits | als `<app-slug>[bot]` mit dessen noreply-Adresse (aus `harness.toml`) |
+| Claude Code | `bypassPermissions` ist Standard, Telemetrie und Auto-Update sind aus |
+
+`einstieg.sh` läuft beim Start als root. Er setzt die Firewall (`firewall.sh`), prüft sie und wechselt dann endgültig zu `agent`. Scheitert die Firewall oder ihr Selbsttest, endet der Container mit Fehler. `docker logs agent-<name>` zeigt warum.
+
+## Netz
+
+Standard ist DROP. Erlaubt sind:
+
+- GitHub, und zwar die Bereiche `web`, `api` und `git` aus `api.github.com/meta`;
+- die Domains aus `[netz] domains` in `harness.toml`, nur auf Port 443;
+- der Broker über `host.docker.internal` auf seinem Port;
+- DNS zu den Nameservern des Containers.
+
+Die IPs werden beim Start aufgelöst. Die Allowlist wird beim Bauen aus dem `harness.toml` von `main` ins Image übernommen. Der Clone im Volume kann sie nicht ändern. **Neue Domains kommen per PR in `harness.toml`**, danach baut der Workflow ein neues Image.
+
+Restrisiken:
+
+- **DNS:** DNS-Anfragen gehen weiter hinaus. Das ist ein schmaler Kanal nach außen.
+- **Geteilte CDN-IPs:** Domains hinter einem CDN (z. B. PyPI) teilen sich IPs mit fremden Seiten, die damit ebenfalls erreichbar sind.
+- **Wechselnde IPs:** Ändert ein Dienst während einer Session seine IPs, hilft ein Neustart des Containers (`docker stop agent-<name>`, dann `just agent …`).
+- **Abmelden:** Nach dem Abmelden gibt der Broker kein neues Token mehr aus. Ein schon geholtes Token gilt aber bis zu 1 h weiter. Sofort wirkt nur der Kill-Switch im [Broker-README](../broker/README.md#kill-switch).
+
+## Image
+
+Das Image baut nur der Workflow [`devcontainer`](../.github/workflows/devcontainer.yml): bei jedem PR zum Testen, aus `main` nach `ghcr.io/<repository klein>/devcontainer` (`latest` und Commit-SHA). Agenten bauen nie Images. Lokal gebaute Images dienen nur den Tests.
+
+## Entwicklung
+
+```bash
+uv run python -m pytest -m "not container"   # ohne Docker
+uv run python -m pytest -m container         # baut harness-devcontainer:test und prüft die Negativproben
+uv run python -m ruff check . && uv run python -m ruff format --check .
+uv run python -m pyright
+```
+
+Unter Windows mit Smart App Control braucht `uv` ein signiertes Python: `uv venv --python "C:\Program Files\Python313\python.exe"`. Die Container-Tests brauchen Docker Desktop. Mit `HARNESS_TEST_IMAGE` laufen sie gegen ein fertiges Image.

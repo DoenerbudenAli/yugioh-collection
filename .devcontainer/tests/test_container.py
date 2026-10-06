@@ -156,3 +156,15 @@ def test_kaputte_allowlist_startet_nicht(image: str, tmp_path: Path, domains: st
         assert meldung in log.stdout + log.stderr
     finally:
         _docker("rm", "--force", name)
+
+
+def test_neustart_setzt_die_firewall_wieder(image: str) -> None:
+    name = _starten(image)
+    try:
+        CliDocker().warte_bereit(name, f"{KLON}/.git")
+        assert _docker("restart", name).returncode == 0
+        CliDocker().warte_bereit(name, f"{KLON}/.git")
+        assert _als_agent(name, "curl -sS --max-time 5 https://example.com").returncode != 0
+        assert _als_agent(name, "curl -fsS --max-time 10 https://api.github.com/zen").returncode == 0
+    finally:
+        _docker("rm", "--force", name)
