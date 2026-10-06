@@ -23,5 +23,5 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 - **Child ticket**: a GitHub sub-issue of the map (`POST repos/DoenerbudenAli/yugioh-collection/issues/<map>/sub_issues -F sub_issue_id=<child-db-id>`). Labels: `wayfinder:<type>` (`research`/`prototype`/`grilling`/`task`).
 - **Blocking**: native issue dependencies: `gh api --method POST repos/DoenerbudenAli/yugioh-collection/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`, where the db id comes from `gh api repos/DoenerbudenAli/yugioh-collection/issues/<n> --jq .id`.
 - **Frontier query**: open sub-issues of the map without open blockers (`issue_dependencies_summary.blocked_by == 0`) and without assignee; first in map order wins.
-- **Claim**: `gh issue edit <n> --add-assignee @me`, the session's first write.
+- **Claim**: `gh issue edit <n> --add-assignee DoenerbudenAli` (the owner drives the map), the session's first write. Not `@me`: sessions run in the container as the GitHub App, and an App can't be an assignee.
 - **Resolve**: `gh issue comment <n> --body "<answer>"`, then `gh issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
