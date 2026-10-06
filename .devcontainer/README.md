@@ -47,7 +47,7 @@ Die IPs werden beim Start aufgelöst. Die Allowlist wird beim Bauen aus dem `har
 Restrisiken:
 
 - **DNS:** DNS-Anfragen gehen weiter hinaus. Das ist ein schmaler Kanal nach außen.
-- **Geteilte CDN-IPs:** Domains hinter einem CDN (z. B. PyPI) teilen sich IPs mit fremden Seiten, die damit ebenfalls erreichbar sind.
+- **Geteilte CDN-IPs, ein breiter Kanal:** `registry.npmjs.org` (Cloudflare) sowie `pypi.org` und `files.pythonhosted.org` (Fastly) teilen ihre IPs mit beliebigen fremden Seiten. Ein reingelegter Agent kann über eine erlaubte IP (`curl --resolve …`) unbemerkt und in voller Bandbreite an eine eigene Seite senden, auch das `setup-token`. Die Firewall begrenzt also IPs, nicht Hostnamen. Abhilfe schafft ein Egress-Proxy mit Hostname-Allowlist (#70).
 - **Wechselnde IPs:** Ändert ein Dienst während einer Session seine IPs, hilft ein Neustart des Containers (`docker stop agent-<name>`, dann `just agent …`).
 - **Abmelden:** Nach dem Abmelden gibt der Broker kein neues Token mehr aus. Ein schon geholtes Token gilt aber bis zu 1 h weiter. Sofort wirkt nur der Kill-Switch im [Broker-README](../broker/README.md#kill-switch).
 
