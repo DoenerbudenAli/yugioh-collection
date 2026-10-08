@@ -77,6 +77,9 @@ _Avoid_: Inbox, Fehlerliste
 
 ### Listen
 
+**Liste**:
+Oberbegriff für Cube-Liste, Deckliste und Eigene Liste; jede verlangt Karten mit Mengen und hat Fehlkarten.
+
 **Cube-Liste**:
 Eine von der Community kuratierte Liste von Karten, aus der im 1-gegen-1 gedraftet wird.
 
